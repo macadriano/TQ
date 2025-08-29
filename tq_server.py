@@ -159,7 +159,18 @@ class TQServer:
         Decodifica un mensaje de posición del protocolo TQ
         """
         try:
-            # Primero verificar si es un mensaje TQ con múltiples paquetes
+            # Primero verificar si es un mensaje ASCII (NMEA)
+            try:
+                ascii_message = data.decode('ascii', errors='ignore')
+                if ascii_message.startswith('*') and ',' in ascii_message:
+                    self.logger.info("Mensaje ASCII NMEA detectado")
+                    nmea_result = self.decode_nmea_message(ascii_message)
+                    if nmea_result:
+                        return nmea_result
+            except:
+                pass
+            
+            # Verificar si es un mensaje TQ con múltiples paquetes
             hex_str = binascii.hexlify(data).decode('ascii')
             
             # Si el mensaje es muy largo, podría contener múltiples paquetes TQ
@@ -705,6 +716,136 @@ class TQServer:
         except Exception as e:
             self.logger.error(f"Error decodificando TQ multi-paquete: {e}")
             return None
+    
+    def decode_nmea_message(self, message: str) -> Optional[Dict]:
+        """
+        Decodifica mensajes NMEA 0183
+        Formato: *HQ,2076668133,V1,224024,A,3438.2205,S,05832.7106,W,000.00,000,290825,FFFFF9FF,000,00,000000,00000#
+        """
+        try:
+            self.logger.info(f"Decodificando mensaje NMEA: {message}")
+            
+            # Verificar que sea un mensaje válido
+            if not message.startswith('*') or not message.endswith('#'):
+                self.logger.warning("Formato NMEA inválido")
+                return None
+            
+            # Remover delimitadores y dividir por comas
+            message = message[1:-1]  # Remover * y #
+            parts = message.split(',')
+            
+            if len(parts) < 15:
+                self.logger.warning(f"Pocos campos en mensaje NMEA: {len(parts)}")
+                return None
+            
+            self.logger.info(f"Campos NMEA: {parts}")
+            
+            # Extraer campos según el formato
+            try:
+                # Campo 1: Tipo de mensaje (HQ)
+                msg_type = parts[0]
+                
+                # Campo 2: ID del dispositivo
+                device_id = int(parts[1])
+                
+                # Campo 3: Versión del protocolo
+                version = parts[2]
+                
+                # Campo 4: Timestamp (HHMMSS)
+                timestamp = parts[3]
+                
+                # Campo 5: Estado (A=Activo, V=Inactivo)
+                status = parts[4]
+                
+                # Campo 6: Latitud (GGMM.MMMM)
+                lat_raw = parts[5]
+                lat_direction = parts[6]  # N o S
+                
+                # Campo 8: Longitud (GGGMM.MMMM)
+                lon_raw = parts[7]
+                lon_direction = parts[8]  # E o W
+                
+                # Campo 10: Velocidad (knots)
+                speed_knots = float(parts[9])
+                
+                # Campo 11: Rumbo (grados)
+                heading = float(parts[10])
+                
+                # Campo 12: Fecha (DDMMYY)
+                date = parts[11]
+                
+                # Convertir coordenadas de formato NMEA a decimal
+                latitude = self.nmea_to_decimal(lat_raw, lat_direction)
+                longitude = self.nmea_to_decimal(lon_raw, lon_direction)
+                
+                # Convertir velocidad de knots a km/h
+                speed_kmh = speed_knots * 1.852
+                
+                self.logger.info(f"Coordenadas NMEA: Lat={latitude:.6f}° ({lat_direction}), Lon={longitude:.6f}° ({lon_direction})")
+                self.logger.info(f"Velocidad: {speed_knots} knots = {speed_kmh:.1f} km/h")
+                self.logger.info(f"Rumbo: {heading}°")
+                
+                return {
+                    'device_id': device_id,
+                    'latitude': latitude,
+                    'longitude': longitude,
+                    'heading': heading,
+                    'speed': speed_kmh,
+                    'timestamp': datetime.now().isoformat(),
+                    'nmea_type': msg_type,
+                    'nmea_version': version,
+                    'nmea_status': status,
+                    'nmea_date': date,
+                    'nmea_timestamp': timestamp
+                }
+                
+            except (ValueError, IndexError) as e:
+                self.logger.error(f"Error extrayendo campos NMEA: {e}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error decodificando NMEA: {e}")
+            return None
+    
+    def nmea_to_decimal(self, coord_str: str, direction: str) -> float:
+        """
+        Convierte coordenadas del formato NMEA (GGMM.MMMM) a decimal
+        """
+        try:
+            # Formato NMEA: GGMM.MMMM (Grados y Minutos)
+            if '.' in coord_str:
+                # Separar grados y minutos
+                parts = coord_str.split('.')
+                if len(parts) >= 2:
+                    degrees_str = parts[0]
+                    minutes_str = parts[1]
+                    
+                    # Los grados son los primeros 2-3 dígitos
+                    if len(degrees_str) >= 3:
+                        degrees = float(degrees_str[:-2])
+                        minutes = float(degrees_str[-2:] + '.' + minutes_str)
+                    else:
+                        degrees = float(degrees_str)
+                        minutes = float(minutes_str)
+                    
+                    # Convertir a decimal
+                    decimal = degrees + (minutes / 60.0)
+                    
+                    # Aplicar dirección
+                    if direction in ['S', 'W']:
+                        decimal = -decimal
+                    
+                    return decimal
+            
+            # Fallback: intentar convertir directamente
+            decimal = float(coord_str)
+            if direction in ['S', 'W']:
+                decimal = -decimal
+            return decimal
+            
+        except Exception as e:
+            self.logger.error(f"Error convirtiendo coordenada NMEA '{coord_str}': {e}")
+            return 0.0
             
     def display_position(self, position_data: Dict, client_id: str):
         """Muestra la información de posición en pantalla"""
@@ -721,6 +862,14 @@ class TQServer:
             print(f"   Secuencia: {position_data['packet_sequence']}")
         if 'total_packets' in position_data:
             print(f"   Paquetes totales: {position_data['total_packets']}")
+        
+        # Mostrar información adicional si es NMEA
+        if 'nmea_type' in position_data:
+            print(f"   Tipo NMEA: {position_data['nmea_type']}")
+            print(f"   Versión: {position_data['nmea_version']}")
+            print(f"   Estado: {position_data['nmea_status']}")
+            print(f"   Fecha: {position_data['nmea_date']}")
+            print(f"   Hora: {position_data['nmea_timestamp']}")
         
         print("-" * 50)
         
