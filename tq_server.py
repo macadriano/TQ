@@ -299,7 +299,7 @@ def main():
     print("=" * 60)
     
     # Crear y configurar servidor
-    server = TQServer(host='0.0.0.0', port=8080)
+    server = TQServer(host='0.0.0.0', port=5003)
     
     try:
         # Iniciar servidor en un hilo separado
