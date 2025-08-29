@@ -144,8 +144,8 @@ def create_sample_config():
 # Copia este archivo como config_local.py y modifica según tus necesidades
 
 # Configuración del servidor
-SERVER_HOST = '0.0.0.0'
-SERVER_PORT = 8080
+SERVER_HOST = '200.58.98.187'
+SERVER_PORT = 5003
 
 # Configuración de logging
 LOG_FILE = 'tq_server.log'

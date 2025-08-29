@@ -13,7 +13,7 @@ import threading
 from datetime import datetime
 
 class TQClient:
-    def __init__(self, server_host: str = 'localhost', server_port: int = 8080, device_id: int = None):
+    def __init__(self, server_host: str = '200.58.98.187', server_port: int = 5003, device_id: int = None):
         """
         Inicializa el cliente TQ
         

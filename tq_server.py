@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple
 
 class TQServer:
-    def __init__(self, host: str = '0.0.0.0', port: int = 8080):
+    def __init__(self, host: str = '200.58.98.187', port: int = 5003):
         """
         Inicializa el servidor TQ
         
