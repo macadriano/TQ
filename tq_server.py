@@ -159,7 +159,17 @@ class TQServer:
         Decodifica un mensaje de posición del protocolo TQ
         """
         try:
-            # Primero intentar decodificar como protocolo TQ específico
+            # Primero verificar si es un mensaje TQ con múltiples paquetes
+            hex_str = binascii.hexlify(data).decode('ascii')
+            
+            # Si el mensaje es muy largo, podría contener múltiples paquetes TQ
+            if len(hex_str) > 100:  # Más de 50 bytes
+                self.logger.info("Mensaje largo detectado, posiblemente múltiples paquetes TQ")
+                multi_packet_result = self.decode_tq_multi_packet(data)
+                if multi_packet_result:
+                    return multi_packet_result
+            
+            # Intentar decodificar como protocolo TQ específico
             tq_result = self.decode_tq_protocol(data)
             if tq_result:
                 return tq_result
@@ -452,7 +462,7 @@ class TQServer:
     def decode_tq_protocol(self, data: bytes) -> Optional[Dict]:
         """
         Decodifica específicamente el protocolo TQ
-        Basado en el mensaje: 24207666813322161629082534382205060583271062000297fffff9ff0000000000000000000000df54000005
+        Basado en el análisis del mensaje real recibido
         """
         try:
             if len(data) < 32:
@@ -513,7 +523,7 @@ class TQServer:
                     elif -59.0 <= signed_coord <= -57.0:
                         self.logger.info(f"  🟡 Longitud candidata (signed): {signed_coord:.6f}° con escala {scale}")
                         if longitude is None:
-                            longitude = unsigned_coord
+                            longitude = signed_coord
                 
                 # Buscar velocidad (valores razonables entre 0-200 km/h)
                 if 0 <= unsigned_val <= 200:
@@ -585,6 +595,116 @@ class TQServer:
         except Exception as e:
             self.logger.error(f"Error decodificando protocolo TQ: {e}")
             return None
+    
+    def decode_tq_multi_packet(self, data: bytes) -> Optional[Dict]:
+        """
+        Decodifica mensajes TQ que contienen múltiples paquetes concatenados
+        Basado en el mensaje real recibido que contiene 6 paquetes
+        """
+        try:
+            hex_str = binascii.hexlify(data).decode('ascii')
+            self.logger.info(f"Decodificando mensaje TQ multi-paquete: {len(hex_str)} caracteres hex")
+            
+            # El mensaje parece contener múltiples paquetes TQ de 45 bytes cada uno
+            # Cada paquete tiene: ID(4) + Lat(4) + Lon(4) + otros campos + ID_secuencial(4)
+            packet_size = 90  # 45 bytes = 90 caracteres hex
+            
+            if len(hex_str) % packet_size != 0:
+                self.logger.warning(f"Longitud del mensaje ({len(hex_str)}) no es múltiplo de {packet_size}")
+            
+            # Contar cuántos paquetes completos hay
+            num_packets = len(hex_str) // packet_size
+            self.logger.info(f"Detectados {num_packets} paquetes TQ")
+            
+            # Decodificar el primer paquete (más reciente)
+            first_packet_hex = hex_str[:packet_size]
+            first_packet_bytes = bytes.fromhex(first_packet_hex)
+            
+            self.logger.info(f"Decodificando primer paquete: {first_packet_hex}")
+            
+            # Extraer ID del dispositivo (primeros 4 bytes)
+            device_id = int(first_packet_hex[0:8], 16)
+            self.logger.info(f"ID del dispositivo: {device_id}")
+            
+            # Extraer coordenadas del primer paquete
+            # Posición 4-7: Latitud (signed)
+            lat_bytes = first_packet_bytes[4:8]
+            lat_signed = int.from_bytes(lat_bytes, byteorder='big', signed=True)
+            
+            # Posición 8-11: Longitud (signed)
+            lon_bytes = first_packet_bytes[8:12]
+            lon_signed = int.from_bytes(lon_bytes, byteorder='big', signed=True)
+            
+            self.logger.info(f"Latitud raw: {lat_signed}, Longitud raw: {lon_signed}")
+            
+            # Buscar el factor de escala correcto
+            # Basándome en el análisis anterior, las coordenadas deberían estar en el rango -34.xx y -58.xx
+            latitude = None
+            longitude = None
+            
+            # Probar diferentes escalas
+            for scale in [1000000, 100000, 10000, 1000, 100, 10, 1]:
+                lat_test = lat_signed / scale
+                lon_test = lon_signed / scale
+                
+                self.logger.info(f"Escala {scale}: Lat={lat_test:.6f}°, Lon={lon_test:.6f}°")
+                
+                # Verificar si están en el rango esperado para Buenos Aires
+                if -35.0 <= lat_test <= -33.0 and -59.0 <= lon_test <= -57.0:
+                    self.logger.info(f"✅ ¡COORDENADAS VÁLIDAS ENCONTRADAS con escala {scale}!")
+                    latitude = lat_test
+                    longitude = lon_test
+                    break
+            
+            # Si no se encontraron coordenadas válidas, usar las del primer paquete con escala por defecto
+            if latitude is None:
+                self.logger.warning("No se encontraron coordenadas válidas, usando escala por defecto")
+                # Usar escala 1000000 como fallback
+                latitude = lat_signed / 1000000.0
+                longitude = lon_signed / 1000000.0
+            
+            # Buscar velocidad y rumbo en el primer paquete
+            speed = 0
+            heading = 0
+            
+            # Buscar en diferentes posiciones del paquete
+            for i in range(16, len(first_packet_bytes) - 4, 4):
+                chunk = first_packet_bytes[i:i+4]
+                val = int.from_bytes(chunk, byteorder='big', signed=False)
+                
+                # Velocidad (0-200 km/h)
+                if 0 <= val <= 200 and speed == 0:
+                    speed = val
+                    self.logger.info(f"Velocidad encontrada: {speed} km/h en posición {i}")
+                
+                # Rumbo (0-360 grados)
+                if 0 <= val <= 360 and heading == 0:
+                    heading = val
+                    self.logger.info(f"Rumbo encontrado: {heading}° en posición {i}")
+            
+            # Extraer ID secuencial del paquete (últimos 4 bytes)
+            seq_id_bytes = first_packet_bytes[-4:]
+            seq_id = int.from_bytes(seq_id_bytes, byteorder='big', signed=False)
+            self.logger.info(f"ID secuencial del paquete: {seq_id}")
+            
+            self.logger.info(f"Coordenadas finales: Lat={latitude:.6f}°, Lon={longitude:.6f}°")
+            self.logger.info(f"Velocidad: {speed} km/h, Rumbo: {heading}°")
+            self.logger.info(f"Paquetes totales: {num_packets}")
+            
+            return {
+                'device_id': device_id,
+                'latitude': latitude,
+                'longitude': longitude,
+                'heading': heading,
+                'speed': speed,
+                'timestamp': datetime.now().isoformat(),
+                'packet_sequence': seq_id,
+                'total_packets': num_packets
+            }
+                
+        except Exception as e:
+            self.logger.error(f"Error decodificando TQ multi-paquete: {e}")
+            return None
             
     def display_position(self, position_data: Dict, client_id: str):
         """Muestra la información de posición en pantalla"""
@@ -595,6 +715,13 @@ class TQServer:
         print(f"   Rumbo: {position_data['heading']}°")
         print(f"   Velocidad: {position_data['speed']} km/h")
         print(f"   Timestamp: {position_data['timestamp']}")
+        
+        # Mostrar información adicional si es un paquete múltiple
+        if 'packet_sequence' in position_data:
+            print(f"   Secuencia: {position_data['packet_sequence']}")
+        if 'total_packets' in position_data:
+            print(f"   Paquetes totales: {position_data['total_packets']}")
+        
         print("-" * 50)
         
     def get_status(self) -> Dict:
