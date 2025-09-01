@@ -11,6 +11,8 @@ import time
 import logging
 import struct
 import binascii
+import csv
+import os
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
@@ -34,6 +36,10 @@ class TQServer:
         
         # Contador de mensajes procesados
         self.message_count = 0
+        
+        # Configurar archivo de registro de posiciones
+        self.positions_file = 'positions_log.csv'
+        self.setup_positions_file()
         
     def setup_logging(self):
         """Configura el sistema de logging"""
@@ -60,6 +66,111 @@ class TQServer:
         # Agregar handlers al logger
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
+        
+    def setup_positions_file(self):
+        """Configura el archivo de registro de posiciones"""
+        try:
+            # Verificar si el archivo existe
+            file_exists = os.path.exists(self.positions_file)
+            
+            # Crear o abrir el archivo para escribir
+            with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # Si el archivo no existe, escribir el encabezado
+                if not file_exists:
+                    writer.writerow(['ID', 'LATITUD', 'LONGITUD', 'RUMBO', 'VELOCIDAD', 'FECHAGPS', 'FECHARECIBIDO'])
+                    self.logger.info(f"Archivo de posiciones creado: {self.positions_file}")
+                else:
+                    self.logger.info(f"Archivo de posiciones existente: {self.positions_file}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error configurando archivo de posiciones: {e}")
+            
+    def save_position_to_file(self, position_data: Dict):
+        """Guarda una posición en el archivo CSV"""
+        try:
+            # Preparar los datos para el archivo
+            device_id = position_data.get('device_id', '')
+            latitude = position_data.get('latitude', 0.0)
+            longitude = position_data.get('longitude', 0.0)
+            heading = position_data.get('heading', 0.0)
+            speed = position_data.get('speed', 0.0)
+            
+            # Fecha GPS (si está disponible en NMEA)
+            gps_date = ''
+            if 'nmea_date' in position_data and 'nmea_timestamp' in position_data:
+                try:
+                    # Formatear fecha GPS: DDMMYY HHMMSS
+                    date_str = position_data['nmea_date']
+                    time_str = position_data['nmea_timestamp']
+                    if len(date_str) == 6 and len(time_str) == 6:
+                        day = date_str[0:2]
+                        month = date_str[2:4]
+                        year = '20' + date_str[4:6]
+                        hour = time_str[0:2]
+                        minute = time_str[2:4]
+                        second = time_str[4:6]
+                        gps_date = f"{year}-{month}-{day} {hour}:{minute}:{second}"
+                except:
+                    gps_date = ''
+            
+            # Fecha de recepción
+            received_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Escribir en el archivo CSV
+            with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow([
+                    device_id,
+                    f"{latitude:.6f}",
+                    f"{longitude:.6f}",
+                    f"{heading:.1f}",
+                    f"{speed:.1f}",
+                    gps_date,
+                    received_date
+                ])
+                
+            self.logger.info(f"Posición guardada en archivo: ID={device_id}, Lat={latitude:.6f}, Lon={longitude:.6f}")
+            
+        except Exception as e:
+            self.logger.error(f"Error guardando posición en archivo: {e}")
+            
+    def show_positions_file(self):
+        """Muestra las últimas posiciones guardadas en el archivo"""
+        try:
+            if not os.path.exists(self.positions_file):
+                print(f"\n📄 No existe el archivo de posiciones: {self.positions_file}")
+                return
+                
+            # Leer las últimas 10 posiciones del archivo
+            with open(self.positions_file, 'r', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                rows = list(reader)
+                
+            if len(rows) <= 1:  # Solo encabezado
+                print(f"\n📄 Archivo de posiciones vacío: {self.positions_file}")
+                return
+                
+            print(f"\n📄 ÚLTIMAS POSICIONES GUARDADAS ({len(rows)-1} total):")
+            print("=" * 80)
+            
+            # Mostrar encabezado
+            headers = rows[0]
+            print(f"{headers[0]:<12} {headers[1]:<12} {headers[2]:<12} {headers[3]:<8} {headers[4]:<10} {headers[5]:<19} {headers[6]:<19}")
+            print("-" * 80)
+            
+            # Mostrar las últimas 10 posiciones (excluyendo encabezado)
+            for row in rows[-10:]:
+                if len(row) >= 7:
+                    print(f"{row[0]:<12} {row[1]:<12} {row[2]:<12} {row[3]:<8} {row[4]:<10} {row[5]:<19} {row[6]:<19}")
+                    
+            print("=" * 80)
+            print(f"📁 Archivo: {self.positions_file}")
+            
+        except Exception as e:
+            self.logger.error(f"Error mostrando archivo de posiciones: {e}")
+            print(f"❌ Error leyendo archivo de posiciones: {e}")
         
     def start(self):
         """Inicia el servidor TCP"""
@@ -146,6 +257,9 @@ class TQServer:
             if position_data:
                 self.logger.info(f"Posición decodificada: {position_data}")
                 self.display_position(position_data, client_id)
+                
+                # Guardar posición en archivo CSV
+                self.save_position_to_file(position_data)
             else:
                 self.logger.warning(f"No se pudo decodificar mensaje de {client_id}")
                 print(f"⚠️  No se pudo decodificar el mensaje")
@@ -904,6 +1018,7 @@ def main():
             command = input("\nComandos disponibles:\n"
                           "  status - Mostrar estado del servidor\n"
                           "  clients - Mostrar clientes conectados\n"
+                          "  positions - Ver últimas posiciones guardadas\n"
                           "  quit - Salir\n"
                           "Comando: ").strip().lower()
             
@@ -925,6 +1040,8 @@ def main():
                         print(f"   - {client}")
                 else:
                     print("\n📭 No hay clientes conectados")
+            elif command == 'positions':
+                server.show_positions_file()
             else:
                 print("❌ Comando no válido")
                 
