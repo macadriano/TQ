@@ -97,6 +97,11 @@ class TQServer:
             heading = position_data.get('heading', 0.0)
             speed = position_data.get('speed', 0.0)
             
+            # Filtrar posiciones con coordenadas 0,0 (sin señal GPS)
+            if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
+                self.logger.info(f"Posición filtrada (sin señal GPS): ID={device_id}, Lat={latitude:.6f}, Lon={longitude:.6f}")
+                return
+            
             # Fecha GPS (si está disponible en NMEA)
             gps_date = ''
             if 'nmea_date' in position_data and 'nmea_timestamp' in position_data:
