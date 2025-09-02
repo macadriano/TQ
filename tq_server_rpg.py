@@ -356,6 +356,13 @@ class TQServerRPG:
             
             if protocol_type == "22":
                 # Protocolo de posición - convertir a RPG y reenviar
+                
+                # ACTUALIZAR: Extraer y guardar el ID del mensaje de posición
+                position_id = protocolo.getIDok(hex_data)
+                if position_id:
+                    self.terminal_id = position_id  # ACTUALIZAR el TerminalID
+                    self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
+                
                 if len(self.terminal_id) > 0:
                     # Convertir a RPG usando la función existente
                     rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
@@ -402,14 +409,6 @@ class TQServerRPG:
                     
                     # Guardar posición en archivo CSV
                     self.save_position_to_file(position_data)
-                    
-                    # Si es un mensaje de posición, extraer y guardar el ID
-                    if protocol_type == "22":  # Mensaje de posición
-                        # Extraer ID del mensaje de posición
-                        position_id = protocolo.getIDok(hex_data)
-                        if position_id:
-                            self.terminal_id = position_id  # ACTUALIZAR el TerminalID
-                            self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
                     
                     # Si tenemos TerminalID, convertir a RPG
                     if len(self.terminal_id) > 0:
