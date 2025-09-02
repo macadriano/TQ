@@ -110,10 +110,27 @@ def getIDchino(dato):
 def getIDok(dato):
     # 24/8/2023 15:21:54: Cliente conectado: 181.3.43.41:50073
     # 24/8/2023 15:21:55: 78 78 0d 01 0352672104435631 03 57 78 53 0d 0a
-    valor = dato[8:24]
-    #valor = "2403" # harcodeado a un equipo cargado en la plataforma de Gus
-    valor = valor[11:16]
-    return valor 
+    
+    # CORREGIDO: Usar el mismo método que tq_server.py
+    # Extraer ID de los primeros 4 bytes (posiciones 0-7 en hex)
+    valor = dato[0:8]
+    
+    # Convertir a decimal y luego tomar solo los últimos 5 caracteres para RPG
+    try:
+        id_decimal = int(valor, 16)
+        # Convertir a string y tomar solo los últimos 5 caracteres
+        id_str = str(id_decimal)
+        if len(id_str) > 5:
+            valor = id_str[-5:]  # Últimos 5 caracteres
+        else:
+            # Si tiene menos de 5 caracteres, completar con ceros a la izquierda
+            valor = id_str.zfill(5)
+    except:
+        # Si falla la conversión, usar el método anterior como fallback
+        valor = dato[8:24]
+        valor = valor[11:16]
+    
+    return valor
 
 
 def getSERIALchino(dato):
@@ -126,39 +143,77 @@ def getERRORchino(dato):
     return valor 
 
 def getLATchino(dato):
-    # 7878222217070704082cce03b9084a0649742900180002d22213bc00b1010000000039eef20d0a
-    # 123456789*123456789*123456789*123456789*123456789*123456789*123456789*123456789
-    # 78 78 22 22 17 07 07 04 08 2c ce 03 b9 08 4a 0649742900180002d22213bc00b1010000000039eef20d0a	
-    valor = dato[22:30]
-    decimal = int(valor, 16) # pasar de hexa a decimal
-    decimal = decimal / 30000 # dividir por 30.000
-    decimal = decimal / 60 # dividir por 60
-    decimal = decimal * (-1) # poner signo
-    return round(decimal ,7)
+    # CORREGIDO: Usar el mismo método que tq_server.py
+    # Posición 8-15 para latitud (4 bytes) con escala 1000000.0
+    try:
+        valor = dato[8:16]  # Posiciones 8-15 (4 bytes)
+        decimal = int(valor, 16) / 1000000.0  # Misma escala que tq_server.py
+        return round(decimal, 7)
+    except:
+        # Fallback al método anterior si falla
+        try:
+            valor = dato[22:30]  # Método anterior
+            decimal = int(valor, 16) / 30000 / 60 * (-1)
+            return round(decimal, 7)
+        except:
+            return 0.0
 
 def getLONchino(dato):
-    # 7878222217070704082cce03b9084a0649742900180002d22213bc00b1010000000039eef20d0a
-    # 123456789*123456789*123456789*123456789*123456789*123456789*123456789*123456789    
-    valor = dato[30:38]
-    decimal = int(valor, 16) # pasar de hexa a decimal
-    decimal = decimal / 30000 # dividir por 30.000
-    decimal = decimal / 60 # dividir por 30.000
-    decimal = decimal * (-1) # poner signo    
-    return round(decimal,7)
+    # CORREGIDO: Usar el mismo método que tq_server.py
+    # Posición 16-23 para longitud (4 bytes) con escala 1000000.0
+    try:
+        valor = dato[16:24]  # Posiciones 16-23 (4 bytes)
+        decimal = int(valor, 16) / 1000000.0  # Misma escala que tq_server.py
+        return round(decimal, 7)
+    except:
+        # Fallback al método anterior si falla
+        try:
+            valor = dato[30:38]  # Método anterior
+            decimal = int(valor, 16) / 30000 / 60 * (-1)
+            return round(decimal, 7)
+        except:
+            return 0.0
 
 def getVELchino(dato):
-    # 7878222217070704082cce03b9084a0649742900180002d22213bc00b1010000000039eef20d0a
-    # 123456789*123456789*123456789*123456789*123456789*123456789*123456789*123456789
-    valor = dato[38:40]
-    decimal = int(valor, 16) # pasar de hexa a decimal
-    #decimal = funciones.completaCero(str(decimal))
-    return decimal 
+    # CORREGIDO: Usar el mismo método que tq_server.py
+    # Buscar velocidad en posiciones 24+ con rango 0-200
+    try:
+        # Buscar en diferentes posiciones como hace tq_server.py
+        for i in range(24, len(dato) - 4, 4):
+            try:
+                valor = dato[i:i+4]  # 4 bytes
+                decimal = int(valor, 16)
+                if 0 <= decimal <= 200:  # Rango razonable para velocidad
+                    return decimal
+            except:
+                continue
+        
+        # Fallback al método anterior si no se encuentra
+        valor = dato[38:40]  # Método anterior
+        decimal = int(valor, 16)
+        return decimal
+    except:
+        return 0
 
 def getRUMBOchino(dato):
-    # 7878222217070704082cce03b9084a0649742900180002d22213bc00b1010000000039eef20d0a
-    # 123456789*123456789*123456789*123456789*123456789*123456789*123456789*123456789
-    valor = dato[40:44]
-    return valor 
+    # CORREGIDO: Usar el mismo método que tq_server.py
+    # Buscar rumbo en posiciones 24+ con rango 0-360
+    try:
+        # Buscar en diferentes posiciones como hace tq_server.py
+        for i in range(24, len(dato) - 4, 4):
+            try:
+                valor = dato[i:i+4]  # 4 bytes
+                decimal = int(valor, 16)
+                if 0 <= decimal <= 360:  # Rango razonable para rumbo
+                    return decimal
+            except:
+                continue
+        
+        # Fallback al método anterior si no se encuentra
+        valor = dato[40:44]  # Método anterior
+        return valor
+    except:
+        return "000"
 
 
 def getFECHAchino(dato):

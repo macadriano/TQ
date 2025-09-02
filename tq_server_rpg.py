@@ -377,9 +377,13 @@ class TQServerRPG:
                     self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
                     
             elif protocol_type == "01":
-                # Protocolo de registro - obtener TerminalID
-                self.terminal_id = protocolo.getIDok(hex_data)
-                self.logger.info(f"TerminalID obtenido: {self.terminal_id}")
+                # Protocolo de registro - obtener TerminalID usando la función CORREGIDA
+                # Ahora usa el mismo método que tq_server.py (primeros 4 bytes)
+                full_terminal_id = protocolo.getIDok(hex_data)
+                self.terminal_id = full_terminal_id  # Ya viene con solo los últimos 5 caracteres
+                
+                self.logger.info(f"TerminalID extraído con método corregido: {full_terminal_id}")
+                self.logger.info(f"TerminalID para RPG: {self.terminal_id}")
                 funciones.guardarLog(f"TerminalID={self.terminal_id}")
                 print(f"🆔 TerminalID configurado: {self.terminal_id}")
                 
@@ -1181,6 +1185,28 @@ class TQServerRPG:
             self.logger.info(f"Conexión cerrada: {client_id}")
             print(f"🔌 Conexión cerrada: {client_id}")
 
+    def show_terminal_info(self):
+        """Muestra información detallada del TerminalID"""
+        if self.terminal_id:
+            print(f"\n🆔 INFORMACIÓN DEL TERMINAL ID:")
+            print(f"   ID para RPG: {self.terminal_id}")
+            print(f"   Longitud: {len(self.terminal_id)} caracteres")
+            print(f"   Tipo: {type(self.terminal_id)}")
+            
+            # Mostrar el ID en diferentes formatos
+            try:
+                # Intentar convertir a entero si es posible
+                id_int = int(self.terminal_id)
+                print(f"   Valor numérico: {id_int}")
+                print(f"   Hexadecimal: {id_int:05X}")
+            except:
+                print(f"   Valor: {self.terminal_id}")
+                
+        else:
+            print("\n⚠️  No hay TerminalID configurado")
+            print("   Esperando mensaje de registro del equipo...")
+            print("   El equipo debe enviar un mensaje de tipo '01' primero")
+
 def main():
     """Función principal"""
     print("=" * 60)
@@ -1205,6 +1231,7 @@ def main():
                           "  positions - Ver últimas posiciones guardadas\n"
                           "  rpg - Ver últimas entradas del log RPG\n"
                           "  terminal - Mostrar TerminalID actual\n"
+                          "  idinfo - Información detallada del ID del equipo\n"
                           "  quit - Salir\n"
                           "Comando: ").strip().lower()
             
@@ -1234,13 +1261,9 @@ def main():
             elif command == 'rpg':
                 server.show_rpg_log()
             elif command == 'terminal':
-                status = server.get_status()
-                if status['terminal_id']:
-                    print(f"\n🆔 TERMINAL ID ACTUAL:")
-                    print(f"   ID: {status['terminal_id']}")
-                else:
-                    print("\n⚠️  No hay TerminalID configurado")
-                    print("   Esperando mensaje de registro del equipo...")
+                server.show_terminal_info()
+            elif command == 'idinfo':
+                server.show_terminal_info()
             else:
                 print("❌ Comando no válido")
                 
