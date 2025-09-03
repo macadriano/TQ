@@ -297,10 +297,15 @@ def RGPdesdeCHINO(dato, TerminalID):
 	# I => 12/11/2016 09:55:38 : >RGP121116125537-3456.0510-05759.56090000283000001;&08;ID=0107;#0090*57<
 	fecha = getFECHAchino(dato)
 	xlat = getLATchino(dato) # viene en formato decimal de grados numerico y signo (ej: -34.594233)
+	xlon = getLONchino(dato)
+	
+	# VALIDACIÓN: No generar mensaje RPG si las coordenadas son 0 (sin señal GPS)
+	if abs(xlat) < 0.000001 and abs(xlon) < 0.000001:
+		return ""  # Retornar string vacío para indicar que no se debe enviar
+	
 	# grados + minutos + decimal de minutos y sin signo (ej: 3441.5918)
 	# lat = str(xlat)[1:3] + str((int(xlat)-xlat)*60)[0:2] + str((int(xlat)-xlat)*60)[2:7]
 	lat = str(xlat)[1:3] + str((xlat-int(xlat))*60)[1:3] + str((xlat-int(xlat))*60)[3:8]
-	xlon = getLONchino(dato)
 	#lon = "0" + str(xlon)[1:3] + str((int(xlon)-xlon)*60)[0:2] + str((int(xlon)-xlon)*60)[2:7]
 	lon = "0" + str(xlon)[1:3] + str((xlon-int(xlon))*60)[1:3] + str((xlon-int(xlon))*60)[3:8]
 	vel = funciones.completaCero3(getVELchino(dato))
@@ -324,9 +329,14 @@ def RGPdesdePERSONAL(dato, TerminalID):
     # I => 12/11/2016 09:55:38 : >RGP121116125537-3456.0510-05759.56090000283000001;&08;ID=0107;#0090*57<
     fecha = getFECHApersonal2(dato)
     xlat = getLATpersonal(dato) # viene en formato decimal de grados numerico y signo (ej: -34.594233)
+    xlon = getLONpersonal(dato)
+    
+    # VALIDACIÓN: No generar mensaje RPG si las coordenadas son 0 (sin señal GPS)
+    if abs(xlat) < 0.000001 and abs(xlon) < 0.000001:
+        return ""  # Retornar string vacío para indicar que no se debe enviar
+    
     # grados + minutos + decimal de minutos y sin signo (ej: 3441.5918)
     lat = xlat
-    xlon = getLONpersonal(dato)
     lon = xlon
     vel = getVELpersonal(dato)
     dir = "000"

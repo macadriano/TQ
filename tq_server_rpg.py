@@ -497,6 +497,11 @@ class TQServerRPG:
             heading = position_data.get('heading', 0.0)
             speed = position_data.get('speed', 0.0)
             
+            # VALIDACIÓN PRINCIPAL: No crear mensaje RPG si las coordenadas son 0 (sin señal GPS)
+            if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
+                self.logger.info(f"No se crea mensaje RPG - coordenadas GPS inválidas: Lat={latitude}, Lon={longitude}")
+                return ""
+            
             # Validar que las coordenadas estén en rangos válidos
             if not (-90 <= latitude <= 90):
                 self.logger.warning(f"Latitud fuera de rango válido para RPG: {latitude}")
