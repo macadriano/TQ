@@ -252,18 +252,19 @@ class TQServerRPG:
             # Convertir a hexadecimal
             hex_str = binascii.hexlify(data).decode('ascii')
             
-            # Extraer ID del dispositivo (primeros 4 bytes)
-            try:
-                device_id = int(hex_str[0:8], 16)
-            except:
-                device_id = 0
+            # CORREGIDO: Extraer tanto el ID completo como el ID para RPG
+            # ID completo para mostrar en consola (posiciones 2-11 del mensaje hexadecimal)
+            device_id_completo = hex_str[2:12]  # "2076668133"
             
-            # CORREGIDO: Extraer coordenadas de las posiciones correctas
-            # Basándome en el mensaje real que llega, las coordenadas están en formato NMEA
-            # El mensaje es: *HQ,2076668133,V1,002125,A,3438.2200,S,05832.7145,W,000.00,000,030925,FFFFF9FF,000,00,000000,00000#
+            # ID para RPG (últimos 5 dígitos del ID completo)
+            device_id = protocolo.getIDok(hex_str)  # "68133"
             
-            # Convertir el hex a ASCII para leer el mensaje NMEA
+            # CORREGIDO: Extraer coordenadas del mensaje hexadecimal del protocolo TQ
+            # El mensaje es: 24207666813317442103092534391355060583202802002297ffffdfff00001c6a00000000000000df54000009
+            # Formato: [ID][timestamp][lat][lon][otros_datos]
+            
             try:
+                # Intentar decodificar como mensaje NMEA primero
                 ascii_message = data.decode('ascii', errors='ignore')
                 if ascii_message.startswith('*') and ascii_message.endswith('#'):
                     # Es un mensaje NMEA, extraer coordenadas correctamente
@@ -296,14 +297,24 @@ class TQServerRPG:
                         latitude = 0.0
                         longitude = 0.0
                 else:
-                    # Fallback al método anterior si no es NMEA
+                    # NO es NMEA - usar el método hexadecimal del protocolo TQ
+                    # Usar las funciones del protocolo para extraer coordenadas
+                    latitude = protocolo.getLATchino(hex_str)
+                    longitude = protocolo.getLONchino(hex_str)
+                    
+                    self.logger.info(f"Coordenadas hexadecimales extraídas: Lat={latitude:.6f}°, Lon={longitude:.6f}°")
+                    
+            except Exception as e:
+                # Fallback: usar el método hexadecimal del protocolo
+                self.logger.warning(f"Error en decodificación NMEA, usando protocolo hexadecimal: {e}")
+                try:
+                    latitude = protocolo.getLATchino(hex_str)
+                    longitude = protocolo.getLONchino(hex_str)
+                    self.logger.info(f"Coordenadas hexadecimales (fallback): Lat={latitude:.6f}°, Lon={longitude:.6f}°")
+                except:
                     latitude = 0.0
                     longitude = 0.0
-                    
-            except:
-                # Fallback al método anterior si falla la decodificación NMEA
-                latitude = 0.0
-                longitude = 0.0
+                    self.logger.error("No se pudieron extraer coordenadas del mensaje hexadecimal")
             
             # Buscar velocidad y rumbo en el resto del mensaje
             speed = 0
@@ -324,7 +335,8 @@ class TQServerRPG:
                     heading = val
             
             return {
-                'device_id': device_id,
+                'device_id': device_id,  # ID para RPG (68133)
+                'device_id_completo': device_id_completo,  # ID completo (2076668133)
                 'latitude': latitude,
                 'longitude': longitude,
                 'heading': heading,
@@ -377,7 +389,7 @@ class TQServerRPG:
     def display_position(self, position_data: Dict, client_id: str):
         """Muestra la información de posición en pantalla"""
         print(f"\n📍 POSICIÓN RECIBIDA de {client_id}")
-        print(f"   ID Equipo: {position_data['device_id']}")
+        print(f"   ID Equipo: {position_data.get('device_id_completo', position_data['device_id'])}")
         print(f"   Latitud: {position_data['latitude']:.6f}°")
         print(f"   Longitud: {position_data['longitude']:.6f}°")
         print(f"   Rumbo: {position_data['heading']}°")
@@ -595,6 +607,8 @@ class TQServerRPG:
 
 def main():
     """Función principal"""
+    import sys
+    
     print("=" * 60)
     print("🚀 SERVIDOR TCP PROTOCOLO TQ + RPG")
     print("=" * 60)
@@ -603,55 +617,70 @@ def main():
     server = TQServerRPG(host='0.0.0.0', port=5003, 
                          udp_host='179.43.115.190', udp_port=7007)
     
-    try:
-        # Iniciar servidor en un hilo separado
-        server_thread = threading.Thread(target=server.start)
-        server_thread.daemon = True
-        server_thread.start()
+    # Verificar si se ejecuta en modo no interactivo (background)
+    if len(sys.argv) > 1 and sys.argv[1] == '--daemon':
+        print("🔄 Modo daemon activado - ejecutando en segundo plano")
+        print("📡 Para detener el servidor: pkill -f tq_server_rpg.py")
         
-        # Bucle principal para comandos
-        while True:
-            command = input("\nComandos disponibles:\n"
-                           "  status - Mostrar estado del servidor\n"
-                           "  clients - Mostrar clientes conectados\n"
-                           "  terminal - Mostrar TerminalID actual\n"
-                           "  checksum - Probar métodos de checksum RPG\n"
-                           "  quit - Salir\n"
-                           "Comando: ").strip().lower()
+        try:
+            # Ejecutar servidor directamente sin bucle de comandos
+            server.start()
+        except KeyboardInterrupt:
+            print("\n🛑 Interrupción detectada...")
+        finally:
+            server.stop()
+            print("👋 Servidor daemon cerrado correctamente")
+    else:
+        # Modo interactivo normal
+        try:
+            # Iniciar servidor en un hilo separado
+            server_thread = threading.Thread(target=server.start)
+            server_thread.daemon = True
+            server_thread.start()
             
-            if command == 'quit':
-                break
-            elif command == 'status':
-                status = server.get_status()
-                print(f"\n📊 ESTADO DEL SERVIDOR:")
-                print(f"   Ejecutándose: {status['running']}")
-                print(f"   Host TCP: {status['host']}")
-                print(f"   Puerto TCP: {status['port']}")
-                print(f"   Host UDP: {status['udp_host']}")
-                print(f"   Puerto UDP: {status['udp_port']}")
-                print(f"   TerminalID: {status['terminal_id']}")
-                print(f"   Clientes conectados: {status['connected_clients']}")
-                print(f"   Mensajes totales: {status['total_messages']}")
-            elif command == 'clients':
-                status = server.get_status()
-                if status['clients']:
-                    print(f"\n🔗 CLIENTES CONECTADOS ({len(status['clients'])}):")
-                    for client in status['clients']:
-                        print(f"   - {client}")
-                else:
-                    print("\n📭 No hay clientes conectados")
-            elif command == 'terminal':
-                server.show_terminal_info()
-            elif command == 'checksum':
-                server.test_checksum_methods()
-            else:
-                print("❌ Comando no válido")
+            # Bucle principal para comandos
+            while True:
+                command = input("\nComandos disponibles:\n"
+                               "  status - Mostrar estado del servidor\n"
+                               "  clients - Mostrar clientes conectados\n"
+                               "  terminal - Mostrar TerminalID actual\n"
+                               "  checksum - Probar métodos de checksum RPG\n"
+                               "  quit - Salir\n"
+                               "Comando: ").strip().lower()
                 
-    except KeyboardInterrupt:
-        print("\n🛑 Interrupción detectada...")
-    finally:
-        server.stop()
-        print("👋 Servidor cerrado correctamente")
+                if command == 'quit':
+                    break
+                elif command == 'status':
+                    status = server.get_status()
+                    print(f"\n📊 ESTADO DEL SERVIDOR:")
+                    print(f"   Ejecutándose: {status['running']}")
+                    print(f"   Host TCP: {status['host']}")
+                    print(f"   Puerto TCP: {status['port']}")
+                    print(f"   Host UDP: {status['udp_host']}")
+                    print(f"   Puerto UDP: {status['udp_port']}")
+                    print(f"   TerminalID: {status['terminal_id']}")
+                    print(f"   Clientes conectados: {status['connected_clients']}")
+                    print(f"   Mensajes totales: {status['total_messages']}")
+                elif command == 'clients':
+                    status = server.get_status()
+                    if status['clients']:
+                        print(f"\n🔗 CLIENTES CONECTADOS ({len(status['clients'])}):")
+                        for client in status['clients']:
+                            print(f"   - {client}")
+                    else:
+                        print("\n📭 No hay clientes conectados")
+                elif command == 'terminal':
+                    server.show_terminal_info()
+                elif command == 'checksum':
+                    server.test_checksum_methods()
+                else:
+                    print("❌ Comando no válido")
+                    
+        except KeyboardInterrupt:
+            print("\n🛑 Interrupción detectada...")
+        finally:
+            server.stop()
+            print("👋 Servidor cerrado correctamente")
 
 if __name__ == "__main__":
     main()
