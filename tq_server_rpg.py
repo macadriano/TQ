@@ -505,35 +505,53 @@ class TQServerRPG:
                 self.logger.warning(f"Longitud fuera de rango válido para RPG: {longitude}")
                 return ""
             
-            # Obtener timestamp actual
+            # Obtener timestamp actual en formato DDMMYYHHMMSS
             now = datetime.now()
-            timestamp = now.strftime('%Y%m%d%H%M%S')
+            timestamp = now.strftime('%d%m%y%H%M%S')
             
-            # Formato RPG según manual GEO5: $RPG,ID,LAT,LON,HEADING,SPEED,TIMESTAMP,STATUS*CHECKSUM
-            # Ejemplo: $RPG,20766,-34.637033,-58.545113,0.0,0.0,20250902212126,A*3A
+            # Formato RPG correcto según el manual: >RGP[timestamp][lat][lon][heading][speed][status]&[seq];ID=[id];#[seq]*[checksum]<
+            # Ejemplo: >RGP210825145011-3416.9932-05855.05980000003000001;&01;ID=38312;#0001*62<
             
-            # Convertir coordenadas a formato estándar (6 decimales)
-            lat_str = f"{latitude:.6f}"
-            lon_str = f"{longitude:.6f}"
+            # Convertir coordenadas al formato RPG (GGMM.MMMM sin signo, dirección implícita)
+            # Latitud: convertir de decimal a GGMM.MMMM
+            lat_abs = abs(latitude)
+            lat_deg = int(lat_abs)
+            lat_min = (lat_abs - lat_deg) * 60.0
+            lat_str = f"{lat_deg:02d}{lat_min:07.4f}"
+            if latitude < 0:  # Sur
+                lat_str = "-" + lat_str
             
-            # Formatear rumbo y velocidad
-            heading_str = f"{heading:.1f}"
-            speed_str = f"{speed:.1f}"
+            # Longitud: convertir de decimal a GGGMM.MMMM sin signo, dirección implícita
+            lon_abs = abs(longitude)
+            lon_deg = int(lon_abs)
+            lon_min = (lon_abs - lon_deg) * 60.0
+            lon_str = f"{lon_deg:03d}{lon_min:07.4f}"
+            if longitude < 0:  # Oeste
+                lon_str = "-" + lon_str
             
-            # Estado (A=Activo, V=Inactivo)
-            # Verificar si las coordenadas son válidas (no 0,0)
-            status = "A" if abs(latitude) > 0.000001 and abs(longitude) > 0.000001 else "V"
+            # Formatear rumbo (3 dígitos) y velocidad (3 dígitos)
+            heading_str = f"{int(heading):03d}"
+            speed_str = f"{int(speed):03d}"
             
-            # Construir mensaje RPG
-            rpg_message = f"$RPG,{terminal_id},{lat_str},{lon_str},{heading_str},{speed_str},{timestamp},{status}"
+            # Estado (1=Activo, 0=Inactivo)
+            status = "1" if abs(latitude) > 0.000001 and abs(longitude) > 0.000001 else "0"
             
-            # Calcular checksum (XOR de todos los caracteres entre $ y *)
+            # Secuencial (siempre 01 para este caso)
+            seq = "01"
+            
+            # Construir mensaje RPG principal
+            rpg_main = f"RGP{timestamp}{lat_str}{lon_str}{heading_str}{speed_str}{status}"
+            
+            # Construir mensaje completo
+            rpg_message = f">{rpg_main}&{seq};ID={terminal_id};#{seq}"
+            
+            # Calcular checksum (suma de todos los caracteres ASCII del mensaje principal)
             checksum = 0
-            for char in rpg_message[1:]:  # Excluir el $
-                checksum ^= ord(char)
+            for char in rpg_main:
+                checksum += ord(char)
             
-            # Agregar checksum en hexadecimal
-            rpg_message += f"*{checksum:02X}"
+            # Agregar checksum en hexadecimal (2 dígitos)
+            rpg_message += f"*{checksum:02X}<"
             
             self.logger.info(f"Mensaje RPG creado desde GPS: {rpg_message}")
             return rpg_message
