@@ -200,6 +200,14 @@ class TQServerRPG:
                     self.logger.info(f"Posición decodificada: {position_data}")
                     self.display_position(position_data, client_id)
                     
+                    # IMPORTANTE: Si no tenemos TerminalID, extraerlo del mensaje de posición
+                    if len(self.terminal_id) == 0:
+                        position_id = protocolo.getIDok(hex_data)
+                        if position_id:
+                            self.terminal_id = position_id
+                            self.logger.info(f"TerminalID actualizado desde mensaje de posición (protocolo {protocol_type}): {position_id}")
+                            print(f"🆔 TerminalID actualizado: {position_id}")
+                    
                     # Guardar posición en archivo CSV
                     self.save_position_to_file(position_data)
                     
