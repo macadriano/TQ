@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Servidor TCP para Protocolo TQ con conversión a RPG y reenvío UDP
