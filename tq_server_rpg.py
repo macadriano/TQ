@@ -543,17 +543,13 @@ class TQServerRPG:
             rpg_main = f"RGP{timestamp}{lat_str}{lon_str}{heading_str}{speed_str}{status}"
             
             # Construir mensaje completo
-            rpg_message = f">{rpg_main}&{seq};ID={terminal_id};#{seq}"
+            rpg_message = f">{rpg_main}&{seq};ID={terminal_id};#0001"
             
-            # Calcular checksum (suma de todos los caracteres ASCII del mensaje principal)
-            checksum = 0
-            for char in rpg_main:
-                checksum += ord(char)
+            # Calcular checksum usando la función correcta del protocolo
+            checksum = self.calculate_rpg_checksum(rpg_main)
             
-            # Agregar checksum en hexadecimal (2 dígitos máximo)
-            # Usar módulo 256 para asegurar que sea solo 2 dígitos hex
-            checksum = checksum % 256
-            rpg_message += f"*{checksum:02X}<"
+            # Agregar checksum (ya viene en formato hexadecimal de 2 dígitos)
+            rpg_message += f"*{checksum}<"
             
             self.logger.info(f"Mensaje RPG creado desde GPS: {rpg_message}")
             return rpg_message
@@ -561,6 +557,36 @@ class TQServerRPG:
         except Exception as e:
             self.logger.error(f"Error creando mensaje RPG desde GPS: {e}")
             return ""
+
+    def calculate_rpg_checksum(self, rpg_main: str) -> str:
+        """Calcula el checksum del mensaje RPG usando la función correcta de protocolo.py"""
+        try:
+            # Usar la función correcta del protocolo para calcular el checksum
+            # Esta función implementa el algoritmo correcto para GEO5
+            return protocolo.sacar_checksum(rpg_main)
+            
+        except Exception as e:
+            self.logger.error(f"Error calculando checksum RPG: {e}")
+            return "00"
+
+    def test_checksum_methods(self):
+        """Prueba el método de checksum correcto del protocolo"""
+        print("\n🧮 PRUEBA DE CHECKSUM RPG CON PROTOCOLO CORRECTO:")
+        
+        # Mensaje de prueba basado en los ejemplos válidos
+        test_message = "RGP030925012859-343.19699-0598.065190080003000001"
+        
+        print(f"Mensaje de prueba: {test_message}")
+        
+        # Usar la función correcta del protocolo
+        checksum_correcto = protocolo.sacar_checksum(test_message)
+        print(f"Checksum calculado: {checksum_correcto}")
+        
+        # Construir mensaje completo para verificar
+        mensaje_completo = f">{test_message}&01;ID=0001;#0001*{checksum_correcto}<"
+        print(f"Mensaje completo: {mensaje_completo}")
+        
+        print("-" * 50)
 
 def main():
     """Función principal"""
@@ -581,11 +607,12 @@ def main():
         # Bucle principal para comandos
         while True:
             command = input("\nComandos disponibles:\n"
-                          "  status - Mostrar estado del servidor\n"
-                          "  clients - Mostrar clientes conectados\n"
-                          "  terminal - Mostrar TerminalID actual\n"
-                          "  quit - Salir\n"
-                          "Comando: ").strip().lower()
+                           "  status - Mostrar estado del servidor\n"
+                           "  clients - Mostrar clientes conectados\n"
+                           "  terminal - Mostrar TerminalID actual\n"
+                           "  checksum - Probar métodos de checksum RPG\n"
+                           "  quit - Salir\n"
+                           "Comando: ").strip().lower()
             
             if command == 'quit':
                 break
@@ -610,6 +637,8 @@ def main():
                     print("\n📭 No hay clientes conectados")
             elif command == 'terminal':
                 server.show_terminal_info()
+            elif command == 'checksum':
+                server.test_checksum_methods()
             else:
                 print("❌ Comando no válido")
                 
