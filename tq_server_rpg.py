@@ -2,20 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 Servidor TCP para Protocolo TQ con conversión a RPG y reenvío UDP
-Maneja conexiones de equipos GPS, decodifica mensajes de posición,
-convierte al protocolo RPG usando las funciones existentes y reenvía por UDP
 """
 
 import socket
 import threading
-import time
 import logging
-import struct
-import binascii
 import csv
 import os
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 # Importar las funciones y protocolos existentes
 import funciones
@@ -24,15 +19,6 @@ import protocolo
 class TQServerRPG:
     def __init__(self, host: str = '0.0.0.0', port: int = 5003, 
                  udp_host: str = '179.43.115.190', udp_port: int = 7007):
-        """
-        Inicializa el servidor TQ con funcionalidad RPG
-        
-        Args:
-            host: Dirección IP del servidor TCP
-            port: Puerto del servidor TCP
-            udp_host: Dirección IP para reenvío UDP
-            udp_port: Puerto para reenvío UDP
-        """
         self.host = host
         self.port = port
         self.udp_host = udp_host
@@ -40,80 +26,57 @@ class TQServerRPG:
         self.server_socket = None
         self.clients: Dict[str, socket.socket] = {}
         self.running = False
+        self.message_count = 0
+        self.terminal_id = ""
         
         # Configurar logging
         self.setup_logging()
         
-        # Contador de mensajes procesados
-        self.message_count = 0
-        
-        # Configurar archivo de registro de posiciones
+        # Configurar archivos
         self.positions_file = 'positions_log.csv'
-        self.setup_positions_file()
-        
-        # Configurar archivo de registro de mensajes RPG
         self.rpg_log_file = 'rpg_messages.log'
+        self.setup_positions_file()
         self.setup_rpg_log_file()
-        
-        # Variable para almacenar el TerminalID
-        self.terminal_id = ""
-        
-        # Socket UDP para reenvío
-        self.udp_socket = None
-        self.setup_udp_socket()
 
     def setup_logging(self):
         """Configura el sistema de logging"""
-        # Crear logger
         self.logger = logging.getLogger('TQServerRPG')
         self.logger.setLevel(logging.INFO)
         
-        # Crear formatter
         formatter = logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # Handler para archivo
         file_handler = logging.FileHandler('tq_server_rpg.log', encoding='utf-8')
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
         
-        # Handler para consola
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(formatter)
         
-        # Agregar handlers al logger
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
         
     def setup_positions_file(self):
         """Configura el archivo de registro de posiciones"""
         try:
-            # Verificar si el archivo existe
             file_exists = os.path.exists(self.positions_file)
-            
-            # Crear o abrir el archivo para escribir
             with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                
-                # Si el archivo no existe, escribir el encabezado
                 if not file_exists:
                     writer.writerow(['ID', 'LATITUD', 'LONGITUD', 'RUMBO', 'VELOCIDAD', 'FECHAGPS', 'FECHARECIBIDO'])
                     self.logger.info(f"Archivo de posiciones creado: {self.positions_file}")
                 else:
                     self.logger.info(f"Archivo de posiciones existente: {self.positions_file}")
-                    
         except Exception as e:
             self.logger.error(f"Error configurando archivo de posiciones: {e}")
             
     def setup_rpg_log_file(self):
         """Configura el archivo de registro de mensajes RPG"""
         try:
-            # Verificar si el archivo existe
             file_exists = os.path.exists(self.rpg_log_file)
-            
             if not file_exists:
                 with open(self.rpg_log_file, 'w', encoding='utf-8') as f:
                     f.write(f"# Log de mensajes RPG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -122,56 +85,24 @@ class TQServerRPG:
                 self.logger.info(f"Archivo de log RPG creado: {self.rpg_log_file}")
             else:
                 self.logger.info(f"Archivo de log RPG existente: {self.rpg_log_file}")
-                
         except Exception as e:
             self.logger.error(f"Error configurando archivo de log RPG: {e}")
-            
-    def setup_udp_socket(self):
-        """Configura el socket UDP para reenvío"""
-        try:
-            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.logger.info(f"Socket UDP configurado para reenvío a {self.udp_host}:{self.udp_port}")
-        except Exception as e:
-            self.logger.error(f"Error configurando socket UDP: {e}")
-            self.udp_socket = None
 
     def save_position_to_file(self, position_data: Dict):
         """Guarda una posición en el archivo CSV"""
         try:
-            # Preparar los datos para el archivo
             device_id = position_data.get('device_id', '')
             latitude = position_data.get('latitude', 0.0)
             longitude = position_data.get('longitude', 0.0)
             heading = position_data.get('heading', 0.0)
             speed = position_data.get('speed', 0.0)
             
-            # Filtrar posiciones con coordenadas 0,0 (sin señal GPS)
             if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
                 self.logger.info(f"Posición filtrada (sin señal GPS): ID={device_id}, Lat={latitude:.6f}, Lon={longitude:.6f}")
                 return
             
-            # Fecha GPS (si está disponible en NMEA)
-            gps_date = ''
-            if 'nmea_date' in position_data and 'nmea_timestamp' in position_data:
-                try:
-                    # Formatear fecha GPS: DDMMYY HHMMSS
-                    date_str = position_data['nmea_date']
-                    time_str = position_data['nmea_timestamp']
-                    if len(date_str) == 6 and len(time_str) == 6:
-                        day = date_str[0:2]
-                        month = date_str[2:4]
-                        year = '20' + date_str[4:6]
-                        hour = time_str[0:2]
-                        minute = time_str[2:4]
-                        second = time_str[4:6]
-                        gps_date = f"{year}-{month}-{day} {hour}:{minute}:{second}"
-                except:
-                    gps_date = ''
-            
-            # Fecha de recepción
             received_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # Escribir en el archivo CSV
             with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow([
@@ -180,7 +111,7 @@ class TQServerRPG:
                     f"{longitude:.6f}",
                     f"{heading:.1f}",
                     f"{speed:.1f}",
-                    gps_date,
+                    '',  # Fecha GPS vacía
                     received_date
                 ])
                 
@@ -200,9 +131,7 @@ class TQServerRPG:
             self.logger.error(f"Error loggeando mensaje RPG: {e}")
 
     def process_message_with_rpg(self, data: bytes, client_id: str):
-        """
-        Procesa un mensaje recibido del cliente, lo convierte a RPG usando las funciones existentes y reenvía por UDP
-        """
+        """Procesa un mensaje recibido del cliente"""
         self.message_count += 1
         
         # Log del mensaje raw
@@ -212,28 +141,29 @@ class TQServerRPG:
         print(f"   Raw: {hex_data}")
         
         try:
-            # Guardar el mensaje en el log usando la función existente
+            # Guardar el mensaje en el log
             funciones.guardarLog(hex_data)
             
-            # Detectar el tipo de protocolo usando la función existente
+            # Detectar el tipo de protocolo
             protocol_type = protocolo.getPROTOCOL(hex_data)
             self.logger.info(f"Tipo de protocolo detectado: {protocol_type}")
             
             if protocol_type == "22":
                 # Protocolo de posición - convertir a RPG y reenviar
                 
-                # ACTUALIZAR: Extraer y guardar el ID del mensaje de posición
+                # IMPORTANTE: Extraer y guardar el ID del mensaje de posición
                 position_id = protocolo.getIDok(hex_data)
                 if position_id:
                     self.terminal_id = position_id  # ACTUALIZAR el TerminalID
                     self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
+                    print(f"🆔 TerminalID actualizado: {position_id}")
                 
                 if len(self.terminal_id) > 0:
                     # Convertir a RPG usando la función existente
                     rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
                     self.logger.info(f"Mensaje RPG generado: {rpg_message}")
                     
-                    # Reenviar por UDP usando la función existente
+                    # Reenviar por UDP
                     funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
                     
                     # Log del mensaje RPG
@@ -249,19 +179,16 @@ class TQServerRPG:
                     self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
                     
             elif protocol_type == "01":
-                # Protocolo de registro - obtener TerminalID usando la función CORREGIDA
-                # Ahora usa el mismo método que tq_server.py (primeros 4 bytes)
+                # Protocolo de registro - obtener TerminalID
                 full_terminal_id = protocolo.getIDok(hex_data)
-                self.terminal_id = full_terminal_id  # Ya viene con solo los últimos 5 caracteres
+                self.terminal_id = full_terminal_id
                 
-                self.logger.info(f"TerminalID extraído con método corregido: {full_terminal_id}")
-                self.logger.info(f"TerminalID para RPG: {self.terminal_id}")
+                self.logger.info(f"TerminalID extraído: {full_terminal_id}")
                 funciones.guardarLog(f"TerminalID={self.terminal_id}")
                 print(f"🆔 TerminalID configurado: {self.terminal_id}")
                 
-                # Enviar respuesta usando la función existente
+                # Enviar respuesta
                 response = protocolo.Enviar0100(self.terminal_id)
-                # Aquí podrías enviar la respuesta al cliente si es necesario
                 
             else:
                 # Otro tipo de protocolo - intentar decodificar como TQ
@@ -277,11 +204,9 @@ class TQServerRPG:
                     
                     # Si tenemos TerminalID, convertir a RPG
                     if len(self.terminal_id) > 0:
-                        # Intentar convertir usando el protocolo personal si es compatible
                         try:
                             rpg_message = protocolo.RGPdesdePERSONAL(hex_data, self.terminal_id)
                             if rpg_message:
-                                # Reenviar por UDP
                                 funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
                                 self.log_rpg_message(hex_data, rpg_message, "ENVIADO_PERSONAL")
                                 print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
@@ -299,9 +224,11 @@ class TQServerRPG:
             print(f"❌ Error procesando mensaje: {e}")
             self.log_rpg_message(hex_data, "", f"ERROR:{str(e)}")
 
-    def decode_position_message(self, data: bytes) -> Optional[Dict]:
+    def decode_position_message(self, data: bytes) -> Dict:
         """Decodifica un mensaje de posición del protocolo TQ"""
         try:
+            import binascii
+            
             # Convertir a hexadecimal
             hex_str = binascii.hexlify(data).decode('ascii')
             
@@ -353,7 +280,7 @@ class TQServerRPG:
                 
         except Exception as e:
             self.logger.error(f"Error en decodificación: {e}")
-            return None
+            return {}
 
     def display_position(self, position_data: Dict, client_id: str):
         """Muestra la información de posición en pantalla"""
@@ -417,12 +344,10 @@ class TQServerRPG:
         self.running = False
         if self.server_socket:
             self.server_socket.close()
-        if self.udp_socket:
-            self.udp_socket.close()
         self.logger.info("Servidor detenido")
         print("🛑 Servidor detenido")
         
-    def handle_client(self, client_socket: socket.socket, client_address: Tuple[str, int]):
+    def handle_client(self, client_socket: socket.socket, client_address):
         """Maneja la conexión de un cliente"""
         client_id = f"{client_address[0]}:{client_address[1]}"
         self.clients[client_id] = client_socket
@@ -459,9 +384,7 @@ class TQServerRPG:
             print(f"   Longitud: {len(self.terminal_id)} caracteres")
             print(f"   Tipo: {type(self.terminal_id)}")
             
-            # Mostrar el ID en diferentes formatos
             try:
-                # Intentar convertir a entero si es posible
                 id_int = int(self.terminal_id)
                 print(f"   Valor numérico: {id_int}")
                 print(f"   Hexadecimal: {id_int:05X}")
@@ -471,7 +394,6 @@ class TQServerRPG:
         else:
             print("\n⚠️  No hay TerminalID configurado")
             print("   Esperando mensaje de registro del equipo...")
-            print("   El equipo debe enviar un mensaje de tipo '01' primero")
 
 def main():
     """Función principal"""
@@ -494,10 +416,7 @@ def main():
             command = input("\nComandos disponibles:\n"
                           "  status - Mostrar estado del servidor\n"
                           "  clients - Mostrar clientes conectados\n"
-                          "  positions - Ver últimas posiciones guardadas\n"
-                          "  rpg - Ver últimas entradas del log RPG\n"
                           "  terminal - Mostrar TerminalID actual\n"
-                          "  idinfo - Información detallada del ID del equipo\n"
                           "  quit - Salir\n"
                           "Comando: ").strip().lower()
             
@@ -522,15 +441,7 @@ def main():
                         print(f"   - {client}")
                 else:
                     print("\n📭 No hay clientes conectados")
-            elif command == 'positions':
-                # Implementar si es necesario
-                print("Comando positions no implementado aún")
-            elif command == 'rpg':
-                # Implementar si es necesario
-                print("Comando rpg no implementado aún")
             elif command == 'terminal':
-                server.show_terminal_info()
-            elif command == 'idinfo':
                 server.show_terminal_info()
             else:
                 print("❌ Comando no válido")
