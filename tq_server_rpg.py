@@ -550,7 +550,9 @@ class TQServerRPG:
             for char in rpg_main:
                 checksum += ord(char)
             
-            # Agregar checksum en hexadecimal (2 dígitos)
+            # Agregar checksum en hexadecimal (2 dígitos máximo)
+            # Usar módulo 256 para asegurar que sea solo 2 dígitos hex
+            checksum = checksum % 256
             rpg_message += f"*{checksum:02X}<"
             
             self.logger.info(f"Mensaje RPG creado desde GPS: {rpg_message}")
