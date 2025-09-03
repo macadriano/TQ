@@ -108,29 +108,34 @@ def getIDchino(dato):
     return valor 
 
 def getIDok(dato):
-    # 24/8/2023 15:21:54: Cliente conectado: 181.3.43.41:50073
-    # 24/8/2023 15:21:55: 78 78 0d 01 0352672104435631 03 57 78 53 0d 0a
+    # CORREGIDO: Extraer ID según la especificación del protocolo
+    # En el string raw, el ID está en la posición 3 con 10 dígitos
+    # Ejemplo: 24207666813317134703092534395301060583232162011236fbffdfff00000f3f00000000000000df54000009
+    # ID: 2076668133 (posiciones 3-12), para RPG usar solo: 68133
     
-    # CORREGIDO: Usar el mismo método que tq_server.py
-    # Extraer ID de los primeros 4 bytes (posiciones 0-7 en hex)
-    valor = dato[0:8]
-    
-    # Convertir a decimal y luego tomar solo los últimos 5 caracteres para RPG
     try:
-        id_decimal = int(valor, 16)
-        # Convertir a string y tomar solo los últimos 5 caracteres
-        id_str = str(id_decimal)
-        if len(id_str) > 5:
-            valor = id_str[-5:]  # Últimos 5 caracteres
+        # CORREGIDO: Extraer los 10 dígitos desde la posición 2
+        # Posiciones 2-11: 2076668133 (ID completo del equipo)
+        id_completo = dato[2:12]  # Posiciones 2-11 (10 dígitos)
+        
+        # Para RPG, usar solo los últimos 5 dígitos del ID completo
+        # NO convertir a decimal, trabajar directamente con el string
+        if len(id_completo) == 10:
+            valor = id_completo[-5:]  # Últimos 5 dígitos
         else:
-            # Si tiene menos de 5 caracteres, completar con ceros a la izquierda
-            valor = id_str.zfill(5)
-    except:
-        # Si falla la conversión, usar el método anterior como fallback
-        valor = dato[8:24]
-        valor = valor[11:16]
-    
-    return valor
+            # Si no tiene 10 dígitos, completar con ceros a la izquierda
+            valor = id_completo.zfill(5)
+            
+        return valor
+        
+    except Exception as e:
+        # Fallback al método anterior si falla
+        try:
+            valor = dato[8:24]
+            valor = valor[11:16]
+            return valor
+        except:
+            return "00000"  # Valor por defecto si todo falla
 
 
 def getSERIALchino(dato):
