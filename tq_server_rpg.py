@@ -214,13 +214,24 @@ class TQServerRPG:
                     # Si tenemos TerminalID, convertir a RPG
                     if len(self.terminal_id) > 0:
                         try:
-                            rpg_message = protocolo.RGPdesdePERSONAL(hex_data, self.terminal_id)
+                            # CORREGIDO: Usar las coordenadas ya decodificadas en lugar de las funciones de protocolo
+                            # Crear mensaje RPG con formato correcto usando los datos GPS decodificados
+                            rpg_message = self.create_rpg_message_from_gps(position_data, self.terminal_id)
                             if rpg_message:
                                 funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
-                                self.log_rpg_message(hex_data, rpg_message, "ENVIADO_PERSONAL")
-                                print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
-                        except:
-                            self.logger.warning("No se pudo convertir a RPG personal")
+                                self.log_rpg_message(hex_data, rpg_message, "ENVIADO_RPG_GPS")
+                                print(f"🔄 Mensaje RPG creado desde GPS enviado por UDP: {rpg_message}")
+                        except Exception as e:
+                            self.logger.warning(f"No se pudo crear mensaje RPG desde GPS: {e}")
+                            # Fallback: intentar con protocolo personal
+                            try:
+                                rpg_message = protocolo.RGPdesdePERSONAL(hex_data, self.terminal_id)
+                                if rpg_message:
+                                    funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                                    self.log_rpg_message(hex_data, rpg_message, "ENVIADO_PERSONAL")
+                                    print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
+                            except:
+                                self.logger.warning("No se pudo convertir a RPG personal")
                     else:
                         self.logger.warning("TerminalID no disponible para conversión RPG")
                         
@@ -247,16 +258,50 @@ class TQServerRPG:
             except:
                 device_id = 0
             
-            # Extraer coordenadas (posiciones 8-15 para latitud, 16-23 para longitud)
+            # CORREGIDO: Extraer coordenadas de las posiciones correctas
+            # Basándome en el mensaje real que llega, las coordenadas están en formato NMEA
+            # El mensaje es: *HQ,2076668133,V1,002125,A,3438.2200,S,05832.7145,W,000.00,000,030925,FFFFF9FF,000,00,000000,00000#
+            
+            # Convertir el hex a ASCII para leer el mensaje NMEA
             try:
-                lat_raw = int(hex_str[8:16], 16)
-                lon_raw = int(hex_str[16:24], 16)
-                
-                # Convertir a coordenadas decimales con escala 1000000.0
-                latitude = lat_raw / 1000000.0
-                longitude = lon_raw / 1000000.0
-                
+                ascii_message = data.decode('ascii', errors='ignore')
+                if ascii_message.startswith('*') and ascii_message.endswith('#'):
+                    # Es un mensaje NMEA, extraer coordenadas correctamente
+                    parts = ascii_message[1:-1].split(',')  # Remover * y #
+                    
+                    if len(parts) >= 8:
+                        # Campo 6: Latitud (GGMM.MMMM)
+                        lat_raw = parts[5]
+                        lat_direction = parts[6]  # N o S
+                        
+                        # Campo 8: Longitud (GGGMM.MMMM)
+                        lon_raw = parts[7]
+                        lon_direction = parts[8]  # E o W
+                        
+                        # Convertir coordenadas de formato NMEA a decimal
+                        latitude = self.nmea_to_decimal(lat_raw, lat_direction)
+                        longitude = self.nmea_to_decimal(lon_raw, lon_direction)
+                        
+                        # Validar rangos geográficos
+                        if not (-90 <= latitude <= 90):
+                            self.logger.warning(f"Latitud fuera de rango válido: {latitude}")
+                            latitude = 0.0
+                        if not (-180 <= longitude <= 180):
+                            self.logger.warning(f"Longitud fuera de rango válido: {longitude}")
+                            longitude = 0.0
+                        
+                        self.logger.info(f"Coordenadas NMEA extraídas: Lat={latitude:.6f}° ({lat_direction}), Lon={longitude:.6f}° ({lon_direction})")
+                        
+                    else:
+                        latitude = 0.0
+                        longitude = 0.0
+                else:
+                    # Fallback al método anterior si no es NMEA
+                    latitude = 0.0
+                    longitude = 0.0
+                    
             except:
+                # Fallback al método anterior si falla la decodificación NMEA
                 latitude = 0.0
                 longitude = 0.0
             
@@ -290,6 +335,44 @@ class TQServerRPG:
         except Exception as e:
             self.logger.error(f"Error en decodificación: {e}")
             return {}
+
+    def nmea_to_decimal(self, coord_str: str, direction: str) -> float:
+        """Convierte coordenadas del formato NMEA (GGMM.MMMM) a decimal"""
+        try:
+            # Formato NMEA: GGMM.MMMM (Grados y Minutos)
+            if '.' in coord_str:
+                # Separar grados y minutos
+                parts = coord_str.split('.')
+                if len(parts) >= 2:
+                    degrees_str = parts[0]
+                    minutes_str = parts[1]
+                    
+                    # Los grados son los primeros 2-3 dígitos
+                    if len(degrees_str) >= 3:
+                        degrees = float(degrees_str[:-2])
+                        minutes = float(degrees_str[-2:] + '.' + minutes_str)
+                    else:
+                        degrees = float(degrees_str)
+                        minutes = float(minutes_str)
+                    
+                    # Convertir a decimal
+                    decimal = degrees + (minutes / 60.0)
+                    
+                    # Aplicar dirección
+                    if direction in ['S', 'W']:
+                        decimal = -decimal
+                    
+                    return decimal
+            
+            # Fallback: intentar convertir directamente
+            decimal = float(coord_str)
+            if direction in ['S', 'W']:
+                decimal = -decimal
+            return decimal
+            
+        except Exception as e:
+            self.logger.error(f"Error convirtiendo coordenada NMEA '{coord_str}': {e}")
+            return 0.0
 
     def display_position(self, position_data: Dict, client_id: str):
         """Muestra la información de posición en pantalla"""
@@ -403,6 +486,61 @@ class TQServerRPG:
         else:
             print("\n⚠️  No hay TerminalID configurado")
             print("   Esperando mensaje de registro del equipo...")
+
+    def create_rpg_message_from_gps(self, position_data: Dict, terminal_id: str) -> str:
+        """Crea un mensaje RPG con formato correcto usando los datos GPS decodificados"""
+        try:
+            # Extraer datos de la posición
+            device_id = position_data.get('device_id', '')
+            latitude = position_data.get('latitude', 0.0)
+            longitude = position_data.get('longitude', 0.0)
+            heading = position_data.get('heading', 0.0)
+            speed = position_data.get('speed', 0.0)
+            
+            # Validar que las coordenadas estén en rangos válidos
+            if not (-90 <= latitude <= 90):
+                self.logger.warning(f"Latitud fuera de rango válido para RPG: {latitude}")
+                return ""
+            if not (-180 <= longitude <= 180):
+                self.logger.warning(f"Longitud fuera de rango válido para RPG: {longitude}")
+                return ""
+            
+            # Obtener timestamp actual
+            now = datetime.now()
+            timestamp = now.strftime('%Y%m%d%H%M%S')
+            
+            # Formato RPG según manual GEO5: $RPG,ID,LAT,LON,HEADING,SPEED,TIMESTAMP,STATUS*CHECKSUM
+            # Ejemplo: $RPG,20766,-34.637033,-58.545113,0.0,0.0,20250902212126,A*3A
+            
+            # Convertir coordenadas a formato estándar (6 decimales)
+            lat_str = f"{latitude:.6f}"
+            lon_str = f"{longitude:.6f}"
+            
+            # Formatear rumbo y velocidad
+            heading_str = f"{heading:.1f}"
+            speed_str = f"{speed:.1f}"
+            
+            # Estado (A=Activo, V=Inactivo)
+            # Verificar si las coordenadas son válidas (no 0,0)
+            status = "A" if abs(latitude) > 0.000001 and abs(longitude) > 0.000001 else "V"
+            
+            # Construir mensaje RPG
+            rpg_message = f"$RPG,{terminal_id},{lat_str},{lon_str},{heading_str},{speed_str},{timestamp},{status}"
+            
+            # Calcular checksum (XOR de todos los caracteres entre $ y *)
+            checksum = 0
+            for char in rpg_message[1:]:  # Excluir el $
+                checksum ^= ord(char)
+            
+            # Agregar checksum en hexadecimal
+            rpg_message += f"*{checksum:02X}"
+            
+            self.logger.info(f"Mensaje RPG creado desde GPS: {rpg_message}")
+            return rpg_message
+            
+        except Exception as e:
+            self.logger.error(f"Error creando mensaje RPG desde GPS: {e}")
+            return ""
 
 def main():
     """Función principal"""
