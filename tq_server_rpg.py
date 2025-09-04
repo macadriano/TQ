@@ -244,6 +244,79 @@ class TQServerRPG:
             print(f"❌ Error procesando mensaje: {e}")
             self.log_rpg_message(hex_data, "", f"ERROR:{str(e)}")
 
+    def decode_nmea_message(self, nmea_message: str) -> Dict:
+        """Decodifica un mensaje NMEA y extrae las coordenadas"""
+        try:
+            # Remover * y # del mensaje NMEA
+            clean_message = nmea_message[1:-1]
+            parts = clean_message.split(',')
+            
+            if len(parts) >= 8:
+                # Extraer ID del dispositivo
+                device_id_completo = parts[1]  # "2076668133"
+                device_id = device_id_completo[-5:]  # "68133" (últimos 5 dígitos)
+                
+                # Extraer coordenadas
+                lat_raw = parts[5]  # "3438.4010"
+                lat_direction = parts[6]  # "S"
+                lon_raw = parts[7]  # "05833.6031"
+                lon_direction = parts[8]  # "W"
+                
+                # Convertir coordenadas NMEA a grados decimales
+                latitude = self.nmea_to_decimal(lat_raw, lat_direction)
+                longitude = self.nmea_to_decimal(lon_raw, lon_direction)
+                
+                # Extraer otros datos
+                heading = 0
+                speed = 0
+                if len(parts) >= 10:
+                    try:
+                        speed = float(parts[9])  # Velocidad en km/h
+                    except:
+                        speed = 0
+                
+                if len(parts) >= 11:
+                    try:
+                        heading = float(parts[10])  # Rumbo en grados
+                    except:
+                        heading = 0
+                
+                self.logger.info(f"Coordenadas NMEA extraídas: Lat={latitude:.6f}°, Lon={longitude:.6f}°")
+                
+                return {
+                    'device_id': device_id,  # ID para RPG (68133)
+                    'device_id_completo': device_id_completo,  # ID completo (2076668133)
+                    'latitude': latitude,
+                    'longitude': longitude,
+                    'heading': heading,
+                    'speed': speed,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                self.logger.warning(f"Mensaje NMEA con formato incorrecto: {nmea_message}")
+                return {}
+                
+        except Exception as e:
+            self.logger.error(f"Error decodificando mensaje NMEA: {e}")
+            return {}
+    
+    def nmea_to_decimal(self, coord_str: str, direction: str) -> float:
+        """Convierte coordenadas NMEA a grados decimales"""
+        try:
+            # Formato NMEA: DDMM.MMMM (grados y minutos)
+            coord = float(coord_str)
+            degrees = int(coord // 100)
+            minutes = coord % 100
+            decimal_degrees = degrees + (minutes / 60.0)
+            
+            # Aplicar signo según la dirección
+            if direction in ['S', 'W']:
+                decimal_degrees = -decimal_degrees
+                
+            return decimal_degrees
+        except:
+            return 0.0
+
     def decode_position_message(self, data: bytes) -> Dict:
         """Decodifica un mensaje de posición del protocolo TQ"""
         try:
@@ -252,6 +325,25 @@ class TQServerRPG:
             # Convertir a hexadecimal
             hex_str = binascii.hexlify(data).decode('ascii')
             
+            # CORREGIDO: Detectar si es mensaje NMEA codificado en hexadecimal
+            try:
+                # Intentar decodificar como mensaje NMEA
+                ascii_message = data.decode('ascii', errors='ignore')
+                if ascii_message.startswith('*') and ascii_message.endswith('#'):
+                    # Es un mensaje NMEA directo
+                    self.logger.info(f"Mensaje NMEA detectado: {ascii_message}")
+                    return self.decode_nmea_message(ascii_message)
+                else:
+                    # Intentar decodificar hex a ASCII
+                    ascii_from_hex = bytes.fromhex(hex_str).decode('ascii', errors='ignore')
+                    if ascii_from_hex.startswith('*') and ascii_from_hex.endswith('#'):
+                        # Es un mensaje NMEA codificado en hexadecimal
+                        self.logger.info(f"Mensaje NMEA codificado en hex detectado: {ascii_from_hex}")
+                        return self.decode_nmea_message(ascii_from_hex)
+            except:
+                pass
+            
+            # Si no es NMEA, continuar con decodificación hexadecimal
             # CORREGIDO: Extraer tanto el ID completo como el ID para RPG
             # ID completo para mostrar en consola (posiciones 2-11 del mensaje hexadecimal)
             device_id_completo = hex_str[2:12]  # "2076668133"
