@@ -698,8 +698,9 @@ class TQServerRPG:
             # Construir mensaje RPG principal
             rpg_main = f"RGP{timestamp}{lat_str}{lon_str}{heading_str}{speed_str}{status}"
             
-            # Construir mensaje completo
-            rpg_message = f">{rpg_main}&{seq};ID={terminal_id};#0001"
+            # Construir mensaje completo con formato correcto
+            # CORREGIDO: Agregar "000001" antes del ";&01" según protocolo GEO5
+            rpg_message = f">{rpg_main}000001;&{seq};ID={terminal_id};#0001"
             
             # Calcular checksum usando la función correcta del protocolo
             # CORREGIDO: Pasar el mensaje completo para que sacar_checksum() encuentre el '>' inicial
