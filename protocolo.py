@@ -276,28 +276,23 @@ def getPROTOCOL(dato):
 def sacar_checksum(xData):
     """
     Calcula el checksum XOR según el manual GEO5:
-    XOR byte a byte desde el primer '>' hasta el último dígito del número de paquete '#...' (inclusive)
+    XOR byte a byte desde el primer '>' hasta el asterisco '*' (inclusive)
     
     Ejemplo: >RGP050925012206-3441.9258-05835.90950000001&01;ID=68133;#0001*42<
-    Calcular XOR de: >RGP050925012206-3441.9258-05835.90950000001&01;ID=68133;#0001
+    Calcular XOR de: >RGP050925012206-3441.9258-05835.90950000001&01;ID=68133;#0001*
     """
     # Encontrar el inicio (primer '>')
     start_idx = xData.find('>')
     if start_idx == -1:
         return "00"
     
-    # Encontrar el final (último dígito del número de paquete después de '#')
-    hash_idx = xData.find('#')
-    if hash_idx == -1:
+    # Encontrar el final (asterisco '*')
+    asterisk_idx = xData.find('*')
+    if asterisk_idx == -1:
         return "00"
     
-    # Buscar el último dígito del número de paquete
-    end_idx = hash_idx + 1
-    while end_idx < len(xData) and xData[end_idx].isdigit():
-        end_idx += 1
-    
-    # Extraer la cadena para calcular XOR
-    data_to_checksum = xData[start_idx:end_idx]
+    # Extraer la cadena para calcular XOR (incluyendo el asterisco)
+    data_to_checksum = xData[start_idx:asterisk_idx + 1]
     
     # Calcular XOR byte a byte
     if not data_to_checksum:
