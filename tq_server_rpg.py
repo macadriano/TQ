@@ -702,7 +702,8 @@ class TQServerRPG:
             rpg_message = f">{rpg_main}&{seq};ID={terminal_id};#0001"
             
             # Calcular checksum usando la función correcta del protocolo
-            checksum = self.calculate_rpg_checksum(rpg_main)
+            # CORREGIDO: Pasar el mensaje completo para que sacar_checksum() encuentre el '>' inicial
+            checksum = self.calculate_rpg_checksum(rpg_message)
             
             # Agregar checksum (ya viene en formato hexadecimal de 2 dígitos)
             rpg_message += f"*{checksum}<"
