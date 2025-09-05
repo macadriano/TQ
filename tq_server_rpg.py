@@ -10,7 +10,7 @@ import threading
 import logging
 import csv
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict
 
 # Importar las funciones y protocolos existentes
@@ -632,9 +632,38 @@ class TQServerRPG:
                 self.logger.warning(f"Longitud fuera de rango válido para RPG: {longitude}")
                 return ""
             
-            # Obtener timestamp actual en formato DDMMYYHHMMSS
-            now = datetime.now()
-            timestamp = now.strftime('%d%m%y%H%M%S')
+            # CORREGIDO: Usar fecha y hora GPS del protocolo TQ con offset -3 horas para Argentina
+            fecha_gps = position_data.get('fecha_gps', '')  # Formato: DD/MM/YY
+            hora_gps = position_data.get('hora_gps', '')    # Formato: HH:MM:SS
+            
+            if fecha_gps and hora_gps:
+                try:
+                    # Parsear fecha y hora GPS
+                    dia, mes, año = fecha_gps.split('/')
+                    hora, minuto, segundo = hora_gps.split(':')
+                    
+                    # Crear datetime UTC
+                    gps_utc = datetime(int('20' + año), int(mes), int(dia), 
+                                     int(hora), int(minuto), int(segundo))
+                    
+                    # Aplicar offset -3 horas para Argentina (UTC-3)
+                    gps_local = gps_utc - timedelta(hours=3)
+                    
+                    # Formatear en DDMMYYHHMMSS
+                    timestamp = gps_local.strftime('%d%m%y%H%M%S')
+                    
+                    self.logger.info(f"Usando fecha/hora GPS: {fecha_gps} {hora_gps} UTC -> {gps_local.strftime('%d/%m/%y %H:%M:%S')} Local")
+                    
+                except Exception as e:
+                    # Fallback al timestamp actual si hay error
+                    now = datetime.now()
+                    timestamp = now.strftime('%d%m%y%H%M%S')
+                    self.logger.warning(f"Error procesando fecha/hora GPS, usando timestamp actual: {e}")
+            else:
+                # Fallback al timestamp actual si no hay fecha/hora GPS
+                now = datetime.now()
+                timestamp = now.strftime('%d%m%y%H%M%S')
+                self.logger.warning("No se encontró fecha/hora GPS, usando timestamp actual")
             
             # Formato RPG correcto según el manual: >RGP[timestamp][lat][lon][heading][speed][status]&[seq];ID=[id];#[seq]*[checksum]<
             # Ejemplo: >RGP210825145011-3416.9932-05855.05980000003000001;&01;ID=38312;#0001*62<
