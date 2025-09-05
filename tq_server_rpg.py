@@ -104,6 +104,10 @@ class TQServerRPG:
             
             received_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
+            # Extraer fecha y hora GPS
+            fecha_gps = position_data.get('fecha_gps', '')
+            hora_gps = position_data.get('hora_gps', '')
+            
             with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow([
@@ -112,11 +116,16 @@ class TQServerRPG:
                     f"{longitude:.6f}",
                     f"{heading:.1f}",
                     f"{speed:.1f}",
-                    '',  # Fecha GPS vacía
+                    fecha_gps,  # Fecha GPS del protocolo TQ
+                    hora_gps,   # Hora GPS del protocolo TQ
                     received_date
                 ])
                 
-            self.logger.info(f"Posición guardada en archivo: ID={device_id}, Lat={latitude:.6f}, Lon={longitude:.6f}")
+            # Log con coordenadas en decimales y fecha/hora GPS
+            log_msg = f"Posición guardada: ID={device_id}, Lat={latitude:.6f}°, Lon={longitude:.6f}°"
+            if fecha_gps and hora_gps:
+                log_msg += f", Fecha GPS={fecha_gps}, Hora GPS={hora_gps}"
+            self.logger.info(log_msg)
             
         except Exception as e:
             self.logger.error(f"Error guardando posición en archivo: {e}")
@@ -344,12 +353,16 @@ class TQServerRPG:
                 pass
             
             # Si no es NMEA, continuar con decodificación hexadecimal
-            # CORREGIDO: Extraer tanto el ID completo como el ID para RPG
+            # CORREGIDO: Extraer datos según protocolo TQ
             # ID completo para mostrar en consola (posiciones 2-11 del mensaje hexadecimal)
             device_id_completo = hex_str[2:12]  # "2076668133"
             
             # ID para RPG (últimos 5 dígitos del ID completo)
             device_id = protocolo.getIDok(hex_str)  # "68133"
+            
+            # Extraer fecha y hora GPS del protocolo TQ
+            fecha_gps = protocolo.getFECHA_GPS_TQ(hex_str)  # "05/09/25"
+            hora_gps = protocolo.getHORA_GPS_TQ(hex_str)    # "00:56:36"
             
             # CORREGIDO: Extraer coordenadas del mensaje hexadecimal del protocolo TQ
             # El mensaje es: 24207666813317442103092534391355060583202802002297ffffdfff00001c6a00000000000000df54000009
@@ -433,6 +446,8 @@ class TQServerRPG:
                 'longitude': longitude,
                 'heading': heading,
                 'speed': speed,
+                'fecha_gps': fecha_gps,  # Fecha GPS del protocolo TQ
+                'hora_gps': hora_gps,    # Hora GPS del protocolo TQ
                 'timestamp': datetime.now().isoformat()
             }
                 
@@ -486,6 +501,9 @@ class TQServerRPG:
         print(f"   Longitud: {position_data['longitude']:.6f}°")
         print(f"   Rumbo: {position_data['heading']}°")
         print(f"   Velocidad: {position_data['speed']} km/h")
+        if position_data.get('fecha_gps') and position_data.get('hora_gps'):
+            print(f"   Fecha GPS: {position_data['fecha_gps']}")
+            print(f"   Hora GPS: {position_data['hora_gps']}")
         print(f"   Timestamp: {position_data['timestamp']}")
         print("-" * 50)
         

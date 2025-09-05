@@ -148,36 +148,38 @@ def getERRORchino(dato):
     return valor 
 
 def getLATchino(dato):
-    # CORREGIDO: Usar el mismo método que tq_server.py
-    # Posición 8-15 para latitud (4 bytes) con escala 1000000.0
+    # CORREGIDO: Extraer latitud según protocolo TQ (posiciones 24-33)
+    # Formato: GGMM.MMMMMM (grados, minutos, decimales de minutos)
     try:
-        valor = dato[8:16]  # Posiciones 8-15 (4 bytes)
-        decimal = int(valor, 16) / 1000000.0  # Misma escala que tq_server.py
-        return round(decimal, 7)
+        valor = dato[24:34]  # Posiciones 24-33 (10 dígitos)
+        # Convertir formato GGMM.MMMMMM a grados decimales
+        grados = int(valor[0:2])  # Primeros 2 dígitos = grados
+        minutos_enteros = int(valor[2:4])  # Siguientes 2 dígitos = minutos enteros
+        decimales_minutos = int(valor[4:10]) / 1000000.0  # Resto = decimales de minutos (6 dígitos)
+        
+        # Convertir a grados decimales
+        minutos_completos = minutos_enteros + decimales_minutos
+        latitud = grados + (minutos_completos / 60.0)
+        return round(-latitud, 7)  # Signo negativo para hemisferio sur
     except:
-        # Fallback al método anterior si falla
-        try:
-            valor = dato[22:30]  # Método anterior
-            decimal = int(valor, 16) / 30000 / 60 * (-1)
-            return round(decimal, 7)
-        except:
-            return 0.0
+        return 0.0
 
 def getLONchino(dato):
-    # CORREGIDO: Usar el mismo método que tq_server.py
-    # Posición 16-23 para longitud (4 bytes) con escala 1000000.0
+    # CORREGIDO: Extraer longitud según protocolo TQ (posiciones 34-43)
+    # Formato: GGGMM.MMMMMM (grados, minutos, decimales de minutos)
     try:
-        valor = dato[16:24]  # Posiciones 16-23 (4 bytes)
-        decimal = int(valor, 16) / 1000000.0  # Misma escala que tq_server.py
-        return round(decimal, 7)
+        valor = dato[34:44]  # Posiciones 34-43 (10 dígitos)
+        # Convertir formato GGGMM.MMMMMM a grados decimales
+        grados = int(valor[0:3])  # Primeros 3 dígitos = grados
+        minutos_enteros = int(valor[3:5])  # Siguientes 2 dígitos = minutos enteros
+        decimales_minutos = int(valor[5:10]) / 100000.0  # Resto = decimales de minutos (5 dígitos)
+        
+        # Convertir a grados decimales
+        minutos_completos = minutos_enteros + decimales_minutos
+        longitud = grados + (minutos_completos / 60.0)
+        return round(-longitud, 7)  # Signo negativo para hemisferio oeste
     except:
-        # Fallback al método anterior si falla
-        try:
-            valor = dato[30:38]  # Método anterior
-            decimal = int(valor, 16) / 30000 / 60 * (-1)
-            return round(decimal, 7)
-        except:
-            return 0.0
+        return 0.0
 
 def getVELchino(dato):
     # CORREGIDO: Usar el mismo método que tq_server.py
@@ -239,6 +241,28 @@ def getFECHAchino(dato):
     mm =funciones.completaCero(str(minute))
     s = funciones.completaCero(str(second))
     return d + m + y + h + mm + s
+
+def getFECHA_GPS_TQ(dato):
+    """Extraer fecha GPS del protocolo TQ (posiciones 18-23)"""
+    try:
+        valor = dato[18:24]  # Posiciones 18-23 (6 dígitos: DDMMYY)
+        dia = valor[0:2]
+        mes = valor[2:4]
+        año = valor[4:6]
+        return f"{dia}/{mes}/{año}"
+    except:
+        return ""
+
+def getHORA_GPS_TQ(dato):
+    """Extraer hora GPS del protocolo TQ (posiciones 12-17)"""
+    try:
+        valor = dato[12:18]  # Posiciones 12-17 (6 dígitos: HHMMSS)
+        hora = valor[0:2]
+        minuto = valor[2:4]
+        segundo = valor[4:6]
+        return f"{hora}:{minuto}:{segundo}"
+    except:
+        return ""
 
 def getHORAchino(dato):
     valor = dato[48:54]
