@@ -702,11 +702,14 @@ class TQServerRPG:
             # CORREGIDO: Agregar "000001" antes del ";&01" según protocolo GEO5
             rpg_message = f">{rpg_main}000001;&{seq};ID={terminal_id};#0001"
             
-            # Calcular checksum usando la función correcta del protocolo
-            # CORREGIDO: Pasar el mensaje completo para que sacar_checksum() encuentre el '>' inicial
-            checksum = self.calculate_rpg_checksum(rpg_message)
+            # Agregar asterisco para el cálculo del checksum
+            rpg_message_with_asterisk = rpg_message + "*"
             
-            # Agregar checksum (ya viene en formato hexadecimal de 2 dígitos)
+            # Calcular checksum usando la función correcta del protocolo
+            # CORREGIDO: Pasar el mensaje con asterisco para que sacar_checksum() incluya el '*' en el XOR
+            checksum = self.calculate_rpg_checksum(rpg_message_with_asterisk)
+            
+            # Agregar checksum y cerrar mensaje
             rpg_message += f"*{checksum}<"
             
             self.logger.info(f"Mensaje RPG creado desde GPS: {rpg_message}")
