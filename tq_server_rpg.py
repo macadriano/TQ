@@ -646,13 +646,11 @@ class TQServerRPG:
                     gps_utc = datetime(int('20' + año), int(mes), int(dia), 
                                      int(hora), int(minuto), int(segundo))
                     
-                    # Aplicar offset -3 horas para Argentina (UTC-3)
-                    gps_local = gps_utc - timedelta(hours=3)
+                    # CORREGIDO: Usar hora GPS original (UTC) sin aplicar offset
+                    # Formatear en DDMMYYHHMMSS usando la hora GPS original
+                    timestamp = gps_utc.strftime('%d%m%y%H%M%S')
                     
-                    # Formatear en DDMMYYHHMMSS
-                    timestamp = gps_local.strftime('%d%m%y%H%M%S')
-                    
-                    self.logger.info(f"Usando fecha/hora GPS: {fecha_gps} {hora_gps} UTC -> {gps_local.strftime('%d/%m/%y %H:%M:%S')} Local")
+                    self.logger.info(f"Usando fecha/hora GPS original: {fecha_gps} {hora_gps} UTC (sin offset)")
                     
                 except Exception as e:
                     # Fallback al timestamp actual si hay error
