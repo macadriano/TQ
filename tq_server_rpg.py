@@ -225,7 +225,9 @@ class TQServerRPG:
                         try:
                             # CORREGIDO: Usar las coordenadas ya decodificadas en lugar de las funciones de protocolo
                             # Crear mensaje RPG con formato correcto usando los datos GPS decodificados
-                            rpg_message = self.create_rpg_message_from_gps(position_data, self.terminal_id)
+                            # Usar el device_id del mensaje actual en lugar del terminal_id fijo
+                            device_id = position_data.get('device_id', '')
+                            rpg_message = self.create_rpg_message_from_gps(position_data, device_id)
                             if rpg_message:
                                 funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
                                 self.log_rpg_message(hex_data, rpg_message, "ENVIADO_RPG_GPS")
