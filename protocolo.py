@@ -125,7 +125,7 @@ def getIDok(dato):
         else:
             # Si no tiene 10 dígitos, completar con ceros a la izquierda
             valor = id_completo.zfill(5)
-            
+    
         return valor
         
     except Exception as e:
@@ -182,45 +182,84 @@ def getLONchino(dato):
         return 0.0
 
 def getVELchino(dato):
-    # CORREGIDO: Usar el mismo método que tq_server.py
-    # Buscar velocidad en posiciones 24+ con rango 0-200
+    """Extraer velocidad del protocolo TQ (en nudos/knots)"""
     try:
-        # Buscar en diferentes posiciones como hace tq_server.py
-        for i in range(24, len(dato) - 4, 4):
+        # Según información del fabricante: velocidad en nudos
+        # Buscar en diferentes posiciones del mensaje TQ
+        for i in range(44, len(dato) - 6, 2):
             try:
-                valor = dato[i:i+4]  # 4 bytes
-                decimal = int(valor, 16)
-                if 0 <= decimal <= 200:  # Rango razonable para velocidad
-                    return decimal
+                # Buscar patrón de 6 dígitos: 3 para velocidad + 3 para rumbo
+                if i + 6 <= len(dato):
+                    valor = dato[i:i+6]  # 6 dígitos hex
+                    if len(valor) == 6:
+                        # Los primeros 3 dígitos son velocidad (0-255 nudos)
+                        vel_hex = valor[0:3]
+                        vel_decimal = int(vel_hex, 16)
+                        if 0 <= vel_decimal <= 255:  # Rango válido para velocidad en nudos
+                            return vel_decimal
             except:
                 continue
         
-        # Fallback al método anterior si no se encuentra
-        valor = dato[38:40]  # Método anterior
-        decimal = int(valor, 16)
-        return decimal
+        # Fallback: buscar en posiciones conocidas del mensaje TQ
+        # Analizar el mensaje: 24207666813318473212092534384865060582269142000167ffffdfff0000f43200000000000000df57
+        # Buscar valores razonables en diferentes posiciones
+        if len(dato) >= 50:
+            # Buscar en posiciones específicas donde podría estar la velocidad
+            posiciones_vel = [44, 46, 48, 50, 52, 54, 56, 58, 60, 62]
+            for pos in posiciones_vel:
+                try:
+                    if pos + 6 <= len(dato):
+                        valor = dato[pos:pos+6]
+                        vel_hex = valor[0:3]
+                        vel_decimal = int(vel_hex, 16)
+                        if 0 <= vel_decimal <= 255:  # Rango válido para velocidad
+                            return vel_decimal
+                except:
+                    continue
+        
+        return 0
     except:
         return 0
 
 def getRUMBOchino(dato):
-    # CORREGIDO: Usar el mismo método que tq_server.py
-    # Buscar rumbo en posiciones 24+ con rango 0-360
+    """Extraer rumbo del protocolo TQ (en grados 0-360)"""
     try:
-        # Buscar en diferentes posiciones como hace tq_server.py
-        for i in range(24, len(dato) - 4, 4):
+        # Según información del fabricante: rumbo en grados (0-360)
+        # Buscar en diferentes posiciones del mensaje TQ
+        for i in range(44, len(dato) - 6, 2):
             try:
-                valor = dato[i:i+4]  # 4 bytes
-                decimal = int(valor, 16)
-                if 0 <= decimal <= 360:  # Rango razonable para rumbo
-                    return decimal
+                # Buscar patrón de 6 dígitos: 3 para velocidad + 3 para rumbo
+                if i + 6 <= len(dato):
+                    valor = dato[i:i+6]  # 6 dígitos hex
+                    if len(valor) == 6:
+                        # Los últimos 3 dígitos son rumbo (0-360 grados)
+                        rumbo_hex = valor[3:6]
+                        rumbo_decimal = int(rumbo_hex, 16)
+                        if 0 <= rumbo_decimal <= 360:  # Rango válido para rumbo
+                            return rumbo_decimal
             except:
                 continue
         
-        # Fallback al método anterior si no se encuentra
-        valor = dato[40:44]  # Método anterior
-        return valor
+        # Fallback: buscar en posiciones conocidas del mensaje TQ
+        # Analizar el mensaje: 24207666813318473212092534384865060582269142000167ffffdfff0000f43200000000000000df57
+        # Buscar valores razonables en diferentes posiciones
+        if len(dato) >= 50:
+            # Buscar en posiciones específicas donde podría estar el rumbo
+            posiciones_rumbo = [44, 46, 48, 50, 52, 54, 56, 58, 60, 62]
+            for pos in posiciones_rumbo:
+                try:
+                    if pos + 6 <= len(dato):
+                        valor = dato[pos:pos+6]
+                        rumbo_hex = valor[3:6]
+                        rumbo_decimal = int(rumbo_hex, 16)
+                        if 0 <= rumbo_decimal <= 360:  # Rango válido para rumbo
+                            return rumbo_decimal
+                except:
+                    continue
+        
+        return 0
     except:
-        return "000"
+        return 0
 
 
 def getFECHAchino(dato):

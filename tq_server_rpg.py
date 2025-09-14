@@ -67,7 +67,7 @@ class TQServerRPG:
             with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 if not file_exists:
-                    writer.writerow(['ID', 'LATITUD', 'LONGITUD', 'RUMBO', 'VELOCIDAD', 'FECHAGPS', 'FECHARECIBIDO'])
+                    writer.writerow(['ID', 'LATITUD', 'LONGITUD', 'RUMBO', 'VELOCIDAD_KMH', 'VELOCIDAD_NUDOS', 'FECHAGPS', 'HORAGPS', 'FECHARECIBIDO'])
                     self.logger.info(f"Archivo de posiciones creado: {self.positions_file}")
                 else:
                     self.logger.info(f"Archivo de posiciones existente: {self.positions_file}")
@@ -110,19 +110,23 @@ class TQServerRPG:
             
             with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
+                # Calcular velocidad en nudos
+                speed_knots = speed / 1.852 if speed > 0 else 0
+                
                 writer.writerow([
                     device_id,
                     f"{latitude:.6f}",
                     f"{longitude:.6f}",
                     f"{heading:.1f}",
-                    f"{speed:.1f}",
-                    fecha_gps,  # Fecha GPS del protocolo TQ
-                    hora_gps,   # Hora GPS del protocolo TQ
+                    f"{speed:.1f}",        # Velocidad en km/h
+                    f"{speed_knots:.1f}",  # Velocidad en nudos
+                    fecha_gps,             # Fecha GPS del protocolo TQ
+                    hora_gps,              # Hora GPS del protocolo TQ
                     received_date
                 ])
                 
-            # Log con coordenadas en decimales y fecha/hora GPS
-            log_msg = f"Posición guardada: ID={device_id}, Lat={latitude:.6f}°, Lon={longitude:.6f}°"
+            # Log con coordenadas, velocidad, rumbo y fecha/hora GPS
+            log_msg = f"Posición guardada: ID={device_id}, Lat={latitude:.6f}°, Lon={longitude:.6f}°, Vel={speed:.1f} km/h ({speed_knots:.1f} nudos), Rumbo={heading}°"
             if fecha_gps and hora_gps:
                 log_msg += f", Fecha GPS={fecha_gps}, Hora GPS={hora_gps}"
             self.logger.info(log_msg)
@@ -423,9 +427,26 @@ class TQServerRPG:
                     longitude = 0.0
                     self.logger.error("No se pudieron extraer coordenadas del mensaje hexadecimal")
             
-            # Buscar velocidad y rumbo en el resto del mensaje
-            speed = 0
-            heading = 0
+            # CORREGIDO: Extraer velocidad y rumbo usando las funciones del protocolo TQ
+            # Según información del fabricante: velocidad en nudos, rumbo en grados (0-360)
+            speed_knots = protocolo.getVELchino(hex_str)  # Velocidad en nudos
+            heading = protocolo.getRUMBOchino(hex_str)    # Rumbo en grados
+            
+            # Convertir velocidad de nudos a km/h para el mensaje RPG
+            # 1 nudo = 1.852 km/h
+            speed_kmh = speed_knots * 1.852
+            
+            # Validar rangos según especificaciones
+            if speed_kmh > 250:  # Límite de 250 km/h
+                self.logger.warning(f"Velocidad excede límite de 250 km/h: {speed_kmh:.2f} km/h ({speed_knots} nudos)")
+                speed_kmh = 250
+            
+            if not (0 <= heading <= 360):  # Rango de rumbo 0-360 grados
+                self.logger.warning(f"Rumbo fuera de rango 0-360: {heading}")
+                heading = 0
+            
+            speed = int(speed_kmh)  # Convertir a entero para el mensaje RPG
+            self.logger.info(f"Velocidad y rumbo extraídos: {speed_knots} nudos ({speed_kmh:.2f} km/h), Rumbo: {heading}°")
             
             # Analizar cada grupo de 4 bytes buscando valores razonables
             data_bytes = bytes.fromhex(hex_str)
@@ -502,7 +523,10 @@ class TQServerRPG:
         print(f"   Latitud: {position_data['latitude']:.6f}°")
         print(f"   Longitud: {position_data['longitude']:.6f}°")
         print(f"   Rumbo: {position_data['heading']}°")
-        print(f"   Velocidad: {position_data['speed']} km/h")
+        # Mostrar velocidad en km/h y nudos
+        speed_kmh = position_data['speed']
+        speed_knots = speed_kmh / 1.852 if speed_kmh > 0 else 0
+        print(f"   Velocidad: {speed_kmh} km/h ({speed_knots:.1f} nudos)")
         if position_data.get('fecha_gps') and position_data.get('hora_gps'):
             print(f"   Fecha GPS: {position_data['fecha_gps']}")
             print(f"   Hora GPS: {position_data['hora_gps']}")
