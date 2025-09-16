@@ -709,7 +709,8 @@ class TQServerRPG:
             if longitude < 0:  # Oeste
                 lon_str = "-" + lon_str
             
-            # Formatear rumbo (3 dígitos) y velocidad (3 dígitos)
+            # CORREGIDO: Formatear rumbo (3 dígitos) y velocidad (3 dígitos)
+            # Usar los valores extraídos directamente sin conversiones adicionales
             heading_str = f"{int(heading):03d}"
             speed_str = f"{int(speed):03d}"
             
