@@ -11,6 +11,8 @@ import logging
 import csv
 import os
 import math
+import requests
+import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 
@@ -34,6 +36,11 @@ class TQServerRPG:
         # Variables para filtros de posición
         self.last_valid_position: Optional[Dict] = None
         self.filtered_positions_count = 0
+        
+        # Configuración de geocodificación
+        self.geocoding_enabled = True  # Variable para habilitar/deshabilitar geocodificación
+        self.geocoding_cache = {}  # Cache para evitar consultas repetidas
+        self.last_geocoding_request = 0  # Control de rate limiting
         
         # Configurar logging
         self.setup_logging()
@@ -197,6 +204,81 @@ class TQServerRPG:
             self.logger.error(f"Error validando posición: {e}")
             return False, f"Error en validación: {e}"
 
+    def get_address_from_coordinates(self, latitude: float, longitude: float) -> str:
+        """
+        Obtiene la dirección usando geocodificación inversa con OpenStreetMap Nominatim
+        
+        Args:
+            latitude: Latitud en grados decimales
+            longitude: Longitud en grados decimales
+            
+        Returns:
+            str: Dirección formateada o mensaje de error
+        """
+        if not self.geocoding_enabled:
+            return ""
+        
+        try:
+            # Crear clave para cache (redondeada a 4 decimales para evitar consultas muy precisas)
+            cache_key = f"{latitude:.4f},{longitude:.4f}"
+            
+            # Verificar cache
+            if cache_key in self.geocoding_cache:
+                return self.geocoding_cache[cache_key]
+            
+            # Rate limiting: máximo 1 consulta por segundo (respetando política de Nominatim)
+            current_time = time.time()
+            if current_time - self.last_geocoding_request < 1.0:
+                time.sleep(1.0 - (current_time - self.last_geocoding_request))
+            
+            # Realizar consulta a Nominatim
+            url = "https://nominatim.openstreetmap.org/reverse"
+            params = {
+                'format': 'json',
+                'lat': latitude,
+                'lon': longitude,
+                'zoom': 18,  # Nivel de detalle (18 = dirección específica)
+                'addressdetails': 1,
+                'accept-language': 'es'  # Preferir respuestas en español
+            }
+            
+            headers = {
+                'User-Agent': 'TQ-Server-RPG/1.0 (GPS Tracking System)'  # Identificar la aplicación
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=5)
+            self.last_geocoding_request = time.time()
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if 'display_name' in data:
+                    address = data['display_name']
+                    
+                    # Guardar en cache
+                    self.geocoding_cache[cache_key] = address
+                    
+                    # Limpiar cache si crece mucho (mantener últimos 100)
+                    if len(self.geocoding_cache) > 100:
+                        # Eliminar 20 entradas más antiguas
+                        old_keys = list(self.geocoding_cache.keys())[:20]
+                        for key in old_keys:
+                            del self.geocoding_cache[key]
+                    
+                    return address
+                else:
+                    return "Dirección no encontrada"
+            else:
+                return f"Error geocodificación: HTTP {response.status_code}"
+                
+        except requests.exceptions.Timeout:
+            return "Timeout geocodificación"
+        except requests.exceptions.RequestException as e:
+            return f"Error red geocodificación: {str(e)[:50]}"
+        except Exception as e:
+            self.logger.error(f"Error en geocodificación: {e}")
+            return f"Error geocodificación: {str(e)[:30]}"
+
     def save_position_to_file(self, position_data: Dict):
         """Guarda una posición en el archivo CSV aplicando filtros de calidad"""
         try:
@@ -238,10 +320,17 @@ class TQServerRPG:
                     received_date
                 ])
                 
-            # Log con coordenadas, velocidad, rumbo y fecha/hora GPS
+            # Obtener dirección mediante geocodificación
+            address = ""
+            if self.geocoding_enabled:
+                address = self.get_address_from_coordinates(latitude, longitude)
+            
+            # Log con coordenadas, velocidad, rumbo, fecha/hora GPS y dirección
             log_msg = f"Posición guardada: ID={device_id}, Lat={latitude:.6f}°, Lon={longitude:.6f}°, Vel={speed:.1f} km/h ({speed_knots:.1f} nudos), Rumbo={heading}°"
             if fecha_gps and hora_gps:
                 log_msg += f", Fecha GPS={fecha_gps}, Hora GPS={hora_gps}"
+            if address:
+                log_msg += f", Dirección: {address}"
             self.logger.info(log_msg)
             
             # ACTUALIZAR ÚLTIMA POSICIÓN VÁLIDA para filtros futuros
@@ -651,6 +740,7 @@ class TQServerRPG:
         
     def get_status(self) -> Dict:
         """Retorna el estado actual del servidor"""
+        geocoding_stats = self.get_geocoding_stats()
         return {
             'running': self.running,
             'host': self.host,
@@ -661,6 +751,8 @@ class TQServerRPG:
             'connected_clients': len(self.clients),
             'total_messages': self.message_count,
             'filtered_positions': self.filtered_positions_count,
+            'geocoding_enabled': geocoding_stats['enabled'],
+            'geocoding_cache_size': geocoding_stats['cache_size'],
             'clients': list(self.clients.keys())
         }
         
@@ -751,6 +843,35 @@ class TQServerRPG:
         else:
             print("\n⚠️  No hay TerminalID configurado")
             print("   Esperando mensaje de registro del equipo...")
+
+    def toggle_geocoding(self, enable: bool = None) -> bool:
+        """
+        Habilita/deshabilita la geocodificación
+        
+        Args:
+            enable: True para habilitar, False para deshabilitar, None para toggle
+            
+        Returns:
+            bool: Estado actual de la geocodificación
+        """
+        if enable is None:
+            self.geocoding_enabled = not self.geocoding_enabled
+        else:
+            self.geocoding_enabled = enable
+        
+        status = "habilitada" if self.geocoding_enabled else "deshabilitada"
+        self.logger.info(f"Geocodificación {status}")
+        print(f"🗺️  Geocodificación {status}")
+        
+        return self.geocoding_enabled
+
+    def get_geocoding_stats(self) -> Dict:
+        """Retorna estadísticas de geocodificación"""
+        return {
+            'enabled': self.geocoding_enabled,
+            'cache_size': len(self.geocoding_cache),
+            'last_request': self.last_geocoding_request
+        }
 
     def create_rpg_message_from_gps(self, position_data: Dict, terminal_id: str) -> str:
         """Crea un mensaje RPG con formato correcto usando los datos GPS decodificados"""
@@ -936,6 +1057,7 @@ def main():
                                "  status - Mostrar estado del servidor\n"
                                "  clients - Mostrar clientes conectados\n"
                                "  terminal - Mostrar TerminalID actual\n"
+                               "  geocoding - Toggle geocodificación on/off\n"
                                "  checksum - Probar métodos de checksum RPG\n"
                                "  quit - Salir\n"
                                "Comando: ").strip().lower()
@@ -955,6 +1077,8 @@ def main():
                     print(f"   Mensajes totales: {status['total_messages']}")
                     print(f"   Posiciones filtradas: {status['filtered_positions']}")
                     print(f"   📍 Filtros activos: Salto distancia/tiempo (>300m/<10s)")
+                    geocoding_status = "✅ Habilitada" if status['geocoding_enabled'] else "❌ Deshabilitada"
+                    print(f"   🗺️  Geocodificación: {geocoding_status} (Cache: {status['geocoding_cache_size']} direcciones)")
                 elif command == 'clients':
                     status = server.get_status()
                     if status['clients']:
@@ -965,6 +1089,12 @@ def main():
                         print("\n📭 No hay clientes conectados")
                 elif command == 'terminal':
                     server.show_terminal_info()
+                elif command == 'geocoding':
+                    current_state = server.toggle_geocoding()
+                    if current_state:
+                        print("   Las nuevas posiciones incluirán direcciones en el log")
+                    else:
+                        print("   Las nuevas posiciones NO incluirán direcciones")
                 elif command == 'checksum':
                     server.test_checksum_methods()
                 else:
