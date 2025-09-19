@@ -148,11 +148,14 @@ class TQServerRPG:
 
     def is_position_valid(self, position_data: Dict) -> Tuple[bool, str]:
         """
-        Valida una posición GPS aplicando filtros de calidad
+        Valida una posición GPS aplicando filtros de calidad inteligentes ON THE FLY
         
         Filtros implementados:
         1. Filtro por salto de distancia/tiempo: >300m en <10s
         2. Control de duplicados: DESACTIVADO (estaba bloqueando mensajes válidos)
+        3. Filtro de saltos excesivos: >1km en <5min (NUEVO)
+        4. Filtro de velocidad incoherente: diferencia >20 km/h (NUEVO)
+        5. Protección de detenciones reales: mantiene paradas legítimas (NUEVO)
         
         Returns:
             Tuple[bool, str]: (es_válida, razón_si_no_válida)
@@ -162,6 +165,8 @@ class TQServerRPG:
             longitude = position_data.get('longitude', 0.0)
             fecha_gps = position_data.get('fecha_gps', '')
             hora_gps = position_data.get('hora_gps', '')
+            speed_kmh = position_data.get('speed', 0.0)
+            heading = position_data.get('heading', 0.0)
             
             # Filtro básico: coordenadas (0,0)
             if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
@@ -175,14 +180,8 @@ class TQServerRPG:
             last_lon = self.last_valid_position.get('longitude', 0.0)
             last_fecha_gps = self.last_valid_position.get('fecha_gps', '')
             last_hora_gps = self.last_valid_position.get('hora_gps', '')
+            last_speed = self.last_valid_position.get('speed', 0.0)
             
-            # FILTRO 2: Control de duplicados - DESACTIVADO
-            # Comentado porque estaba bloqueando mensajes RPG válidos
-            # if (abs(latitude - last_lat) < 0.000001 and 
-            #     abs(longitude - last_lon) < 0.000001):
-            #     return False, f"Posición duplicada: Lat={latitude:.6f}, Lon={longitude:.6f}"
-            
-            # FILTRO 1: Filtro por salto de distancia/tiempo
             # Calcular distancia entre posiciones
             distance = self.calculate_distance(last_lat, last_lon, latitude, longitude)
             
@@ -191,12 +190,33 @@ class TQServerRPG:
             last_time = self.parse_gps_datetime(last_fecha_gps, last_hora_gps)
             
             if current_time and last_time:
-                # Calcular diferencia de tiempo en segundos
                 time_diff = abs((current_time - last_time).total_seconds())
                 
-                # Si la distancia es >300m y el tiempo <10s, es sospechoso
+                if time_diff > 0:
+                    calculated_speed = (distance / time_diff) * 3.6  # km/h
+                else:
+                    calculated_speed = 0
+                
+                # FILTRO 1: Salto sospechoso original
                 if distance > 300 and time_diff < 10:
                     return False, f"Salto sospechoso: {distance:.1f}m en {time_diff:.1f}s"
+                
+                # FILTRO 3: Saltos excesivos (NUEVO) - Evita líneas transversales
+                if distance > 1000 and time_diff < 300:  # >1km en <5min
+                    return False, f"Salto excesivo: {distance:.1f}m en {time_diff/60:.1f}min"
+                
+                # FILTRO 4: Velocidad incoherente (NUEVO)
+                speed_diff = abs(calculated_speed - speed_kmh)
+                if speed_diff > 20 and distance > 100:
+                    return False, f"Velocidad incoherente: calc={calculated_speed:.1f} vs rep={speed_kmh:.1f} km/h"
+                
+                # FILTRO 5: Protección de detenciones reales (NUEVO)
+                # Si ambos puntos reportan velocidad baja Y la distancia es pequeña, es detención real
+                is_real_stop = (speed_kmh < 5 and last_speed < 5 and distance < 100)
+                
+                # Salto estacionario: reporta estar parado pero saltó mucho (EXCEPTO detenciones reales)
+                if speed_kmh < 1 and distance > 300 and not is_real_stop:
+                    return False, f"Salto estacionario: {distance:.1f}m reportando parado"
             
             return True, ""
             
@@ -1076,7 +1096,12 @@ def main():
                     print(f"   Clientes conectados: {status['connected_clients']}")
                     print(f"   Mensajes totales: {status['total_messages']}")
                     print(f"   Posiciones filtradas: {status['filtered_positions']}")
-                    print(f"   📍 Filtros activos: Salto distancia/tiempo (>300m/<10s)")
+                    print(f"   📍 Filtros ON-THE-FLY activos:")
+                    print(f"      • Salto sospechoso: >300m/<10s")
+                    print(f"      • Salto excesivo: >1km/<5min")
+                    print(f"      • Velocidad incoherente: diff >20 km/h")
+                    print(f"      • Salto estacionario: >300m reportando parado")
+                    print(f"      • ✅ Protege detenciones reales en calles")
                     geocoding_status = "✅ Habilitada" if status['geocoding_enabled'] else "❌ Deshabilitada"
                     print(f"   🗺️  Geocodificación: {geocoding_status} (Cache: {status['geocoding_cache_size']} direcciones)")
                 elif command == 'clients':
