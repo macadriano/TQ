@@ -145,7 +145,7 @@ class TQServerRPG:
         
         Filtros implementados:
         1. Filtro por salto de distancia/tiempo: >300m en <10s
-        2. Control de duplicados: coordenadas iguales consecutivas
+        2. Control de duplicados: DESACTIVADO (estaba bloqueando mensajes válidos)
         
         Returns:
             Tuple[bool, str]: (es_válida, razón_si_no_válida)
@@ -169,11 +169,11 @@ class TQServerRPG:
             last_fecha_gps = self.last_valid_position.get('fecha_gps', '')
             last_hora_gps = self.last_valid_position.get('hora_gps', '')
             
-            # FILTRO 2: Control de duplicados
-            # Si las coordenadas son exactamente iguales, es un duplicado
-            if (abs(latitude - last_lat) < 0.000001 and 
-                abs(longitude - last_lon) < 0.000001):
-                return False, f"Posición duplicada: Lat={latitude:.6f}, Lon={longitude:.6f}"
+            # FILTRO 2: Control de duplicados - DESACTIVADO
+            # Comentado porque estaba bloqueando mensajes RPG válidos
+            # if (abs(latitude - last_lat) < 0.000001 and 
+            #     abs(longitude - last_lon) < 0.000001):
+            #     return False, f"Posición duplicada: Lat={latitude:.6f}, Lon={longitude:.6f}"
             
             # FILTRO 1: Filtro por salto de distancia/tiempo
             # Calcular distancia entre posiciones
@@ -954,7 +954,7 @@ def main():
                     print(f"   Clientes conectados: {status['connected_clients']}")
                     print(f"   Mensajes totales: {status['total_messages']}")
                     print(f"   Posiciones filtradas: {status['filtered_positions']}")
-                    print(f"   📍 Filtros activos: Salto distancia/tiempo (>300m/<10s), Duplicados")
+                    print(f"   📍 Filtros activos: Salto distancia/tiempo (>300m/<10s)")
                 elif command == 'clients':
                     status = server.get_status()
                     if status['clients']:
