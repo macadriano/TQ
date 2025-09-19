@@ -10,8 +10,9 @@ import threading
 import logging
 import csv
 import os
+import math
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 # Importar las funciones y protocolos existentes
 import funciones
@@ -29,6 +30,10 @@ class TQServerRPG:
         self.running = False
         self.message_count = 0
         self.terminal_id = ""
+        
+        # Variables para filtros de posición
+        self.last_valid_position: Optional[Dict] = None
+        self.filtered_positions_count = 0
         
         # Configurar logging
         self.setup_logging()
@@ -89,8 +94,111 @@ class TQServerRPG:
         except Exception as e:
             self.logger.error(f"Error configurando archivo de log RPG: {e}")
 
+    def calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """
+        Calcula la distancia en metros entre dos coordenadas GPS usando la fórmula de Haversine
+        """
+        try:
+            # Convertir grados a radianes
+            lat1_rad = math.radians(lat1)
+            lon1_rad = math.radians(lon1)
+            lat2_rad = math.radians(lat2)
+            lon2_rad = math.radians(lon2)
+            
+            # Diferencias
+            dlat = lat2_rad - lat1_rad
+            dlon = lon2_rad - lon1_rad
+            
+            # Fórmula de Haversine
+            a = math.sin(dlat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2
+            c = 2 * math.asin(math.sqrt(a))
+            
+            # Radio de la Tierra en metros
+            r = 6371000
+            
+            return c * r
+        except:
+            return 0.0
+
+    def parse_gps_datetime(self, fecha_gps: str, hora_gps: str) -> Optional[datetime]:
+        """
+        Parsea fecha y hora GPS del protocolo TQ a datetime
+        """
+        try:
+            if not fecha_gps or not hora_gps:
+                return None
+            
+            # Formato fecha: DD/MM/YY
+            # Formato hora: HH:MM:SS
+            dia, mes, año = fecha_gps.split('/')
+            hora, minuto, segundo = hora_gps.split(':')
+            
+            # Crear datetime UTC
+            return datetime(int('20' + año), int(mes), int(dia), 
+                          int(hora), int(minuto), int(segundo))
+        except:
+            return None
+
+    def is_position_valid(self, position_data: Dict) -> Tuple[bool, str]:
+        """
+        Valida una posición GPS aplicando filtros de calidad
+        
+        Filtros implementados:
+        1. Filtro por salto de distancia/tiempo: >300m en <10s
+        2. Control de duplicados: coordenadas iguales consecutivas
+        
+        Returns:
+            Tuple[bool, str]: (es_válida, razón_si_no_válida)
+        """
+        try:
+            latitude = position_data.get('latitude', 0.0)
+            longitude = position_data.get('longitude', 0.0)
+            fecha_gps = position_data.get('fecha_gps', '')
+            hora_gps = position_data.get('hora_gps', '')
+            
+            # Filtro básico: coordenadas (0,0)
+            if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
+                return False, "Coordenadas GPS inválidas (0,0)"
+            
+            # Si no hay posición anterior válida, aceptar esta como primera
+            if self.last_valid_position is None:
+                return True, ""
+            
+            last_lat = self.last_valid_position.get('latitude', 0.0)
+            last_lon = self.last_valid_position.get('longitude', 0.0)
+            last_fecha_gps = self.last_valid_position.get('fecha_gps', '')
+            last_hora_gps = self.last_valid_position.get('hora_gps', '')
+            
+            # FILTRO 2: Control de duplicados
+            # Si las coordenadas son exactamente iguales, es un duplicado
+            if (abs(latitude - last_lat) < 0.000001 and 
+                abs(longitude - last_lon) < 0.000001):
+                return False, f"Posición duplicada: Lat={latitude:.6f}, Lon={longitude:.6f}"
+            
+            # FILTRO 1: Filtro por salto de distancia/tiempo
+            # Calcular distancia entre posiciones
+            distance = self.calculate_distance(last_lat, last_lon, latitude, longitude)
+            
+            # Parsear timestamps GPS
+            current_time = self.parse_gps_datetime(fecha_gps, hora_gps)
+            last_time = self.parse_gps_datetime(last_fecha_gps, last_hora_gps)
+            
+            if current_time and last_time:
+                # Calcular diferencia de tiempo en segundos
+                time_diff = abs((current_time - last_time).total_seconds())
+                
+                # Si la distancia es >300m y el tiempo <10s, es sospechoso
+                if distance > 300 and time_diff < 10:
+                    return False, f"Salto sospechoso: {distance:.1f}m en {time_diff:.1f}s"
+            
+            return True, ""
+            
+        except Exception as e:
+            self.logger.error(f"Error validando posición: {e}")
+            return False, f"Error en validación: {e}"
+
     def save_position_to_file(self, position_data: Dict):
-        """Guarda una posición en el archivo CSV"""
+        """Guarda una posición en el archivo CSV aplicando filtros de calidad"""
         try:
             device_id = position_data.get('device_id', '')
             latitude = position_data.get('latitude', 0.0)
@@ -98,8 +206,13 @@ class TQServerRPG:
             heading = position_data.get('heading', 0.0)
             speed = position_data.get('speed', 0.0)
             
-            if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
-                self.logger.info(f"Posición filtrada (sin señal GPS): ID={device_id}, Lat={latitude:.6f}, Lon={longitude:.6f}")
+            # APLICAR FILTROS DE CALIDAD
+            is_valid, reason = self.is_position_valid(position_data)
+            
+            if not is_valid:
+                self.filtered_positions_count += 1
+                self.logger.info(f"Posición filtrada #{self.filtered_positions_count}: {reason}")
+                print(f"🚫 Posición filtrada: {reason}")
                 return
             
             received_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -130,6 +243,9 @@ class TQServerRPG:
             if fecha_gps and hora_gps:
                 log_msg += f", Fecha GPS={fecha_gps}, Hora GPS={hora_gps}"
             self.logger.info(log_msg)
+            
+            # ACTUALIZAR ÚLTIMA POSICIÓN VÁLIDA para filtros futuros
+            self.last_valid_position = position_data.copy()
             
         except Exception as e:
             self.logger.error(f"Error guardando posición en archivo: {e}")
@@ -544,6 +660,7 @@ class TQServerRPG:
             'terminal_id': self.terminal_id,
             'connected_clients': len(self.clients),
             'total_messages': self.message_count,
+            'filtered_positions': self.filtered_positions_count,
             'clients': list(self.clients.keys())
         }
         
@@ -645,9 +762,11 @@ class TQServerRPG:
             heading = position_data.get('heading', 0.0)
             speed = position_data.get('speed', 0.0)
             
-            # VALIDACIÓN PRINCIPAL: No crear mensaje RPG si las coordenadas son 0 (sin señal GPS)
-            if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
-                self.logger.info(f"No se crea mensaje RPG - coordenadas GPS inválidas: Lat={latitude}, Lon={longitude}")
+            # APLICAR FILTROS DE CALIDAD antes de crear mensaje RPG
+            is_valid, reason = self.is_position_valid(position_data)
+            
+            if not is_valid:
+                self.logger.info(f"No se crea mensaje RPG - posición filtrada: {reason}")
                 return ""
             
             # Validar que las coordenadas estén en rangos válidos
@@ -738,6 +857,10 @@ class TQServerRPG:
             rpg_message += f"*{checksum}<"
             
             self.logger.info(f"Mensaje RPG creado desde GPS: {rpg_message}")
+            
+            # ACTUALIZAR ÚLTIMA POSICIÓN VÁLIDA para filtros futuros
+            self.last_valid_position = position_data.copy()
+            
             return rpg_message
             
         except Exception as e:
@@ -830,6 +953,8 @@ def main():
                     print(f"   TerminalID: {status['terminal_id']}")
                     print(f"   Clientes conectados: {status['connected_clients']}")
                     print(f"   Mensajes totales: {status['total_messages']}")
+                    print(f"   Posiciones filtradas: {status['filtered_positions']}")
+                    print(f"   📍 Filtros activos: Salto distancia/tiempo (>300m/<10s), Duplicados")
                 elif command == 'clients':
                     status = server.get_status()
                     if status['clients']:
