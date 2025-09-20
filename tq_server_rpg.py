@@ -221,7 +221,7 @@ class TQServerRPG:
             return True, ""
             
         except Exception as e:
-            self.logger.error(f"Error validando posición: {e}")
+            self.logger.error(f"Error valdffdfdidando posición: {e}")
             return False, f"Error en validación: {e}"
 
     def get_address_from_coordinates(self, latitude: float, longitude: float) -> str:
