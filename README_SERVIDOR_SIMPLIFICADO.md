@@ -51,6 +51,10 @@ python tq_server_simplificado.py --host 0.0.0.0 --port 5003 --udp-host 179.43.11
 
 ### 3. Probar el Servidor
 ```bash
+# Linux/Unix
+python3 test_server_simplificado.py
+
+# Windows
 python test_server_simplificado.py
 ```
 

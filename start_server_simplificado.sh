@@ -32,4 +32,14 @@ mkdir -p logs
 
 # Iniciar el servidor
 echo "🔄 Iniciando servidor..."
-python tq_server_simplificado.py
+
+# Verificar si python3 está disponible
+if command -v python3 &> /dev/null; then
+    python3 tq_server_simplificado.py
+elif command -v python &> /dev/null; then
+    python tq_server_simplificado.py
+else
+    echo "❌ Error: No se encontró python ni python3"
+    echo "   Instalar Python: sudo apt update && sudo apt install python3"
+    exit 1
+fi
