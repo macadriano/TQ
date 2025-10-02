@@ -184,25 +184,29 @@ class TQServerSimplificado:
             # Guardar el mensaje en el log - USAR FUNCIONES ORIGINALES
             funciones.guardarLog(hex_data)
             
-            # Detectar el tipo de protocolo - USAR FUNCIONES ORIGINALES
-            protocol_type = protocolo.getPROTOCOL(hex_data)
-            self.logger.info(f"Tipo de protocolo detectado: {protocol_type}")
+            # VALIDAR MENSAJE TQ - MÉTODO SIMPLE QUE FUNCIONABA
+            # Verificar si es un mensaje TQ válido (empieza con "24" y tiene longitud adecuada)
+            if not self.is_valid_message_format(hex_data):
+                self.logger.warning(f"Mensaje con formato inválido descartado de {client_id}: {hex_data[:50]}...")
+                return
             
-            if protocol_type == "22":
-                # Protocolo de posición - convertir a RPG y reenviar
+            # Log del mensaje TQ válido
+            self.logger.info(f"Mensaje TQ válido recibido de {client_id}: {hex_data[:50]}...")
+            
+            # PROCESAR MENSAJE TQ - MÉTODO DIRECTO
+            # Extraer TerminalID del mensaje
+            position_id = protocolo.getIDok(hex_data)
+            if position_id:
+                self.terminal_id = position_id  # ACTUALIZAR el TerminalID
+                self.logger.info(f"TerminalID actualizado desde mensaje: {position_id}")
+                print(f"🆔 TerminalID actualizado: {position_id}")
+            
+            if len(self.terminal_id) > 0:
+                # Convertir a RPG usando la función existente - EXACTO COMO EL ORIGINAL
+                rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
+                self.logger.info(f"Mensaje RPG generado: {rpg_message}")
                 
-                # IMPORTANTE: Extraer y guardar el ID del mensaje de posición
-                position_id = protocolo.getIDok(hex_data)
-                if position_id:
-                    self.terminal_id = position_id  # ACTUALIZAR el TerminalID
-                    self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
-                    print(f"🆔 TerminalID actualizado: {position_id}")
-                
-                if len(self.terminal_id) > 0:
-                    # Convertir a RPG usando la función existente - EXACTO COMO EL ORIGINAL
-                    rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
-                    self.logger.info(f"Mensaje RPG generado: {rpg_message}")
-                    
+                if rpg_message:  # Solo enviar si se generó mensaje RPG válido
                     # Reenviar por UDP - USAR FUNCIONES ORIGINALES
                     funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
                     
@@ -213,25 +217,12 @@ class TQServerSimplificado:
                     
                     # También guardar en el log UDP - USAR FUNCIONES ORIGINALES
                     funciones.guardarLogUDP(rpg_message)
-                    
                 else:
-                    self.logger.warning("TerminalID no disponible para conversión RPG")
-                    self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
-                    
-            elif protocol_type == "01":
-                # Protocolo de registro - obtener TerminalID
-                full_terminal_id = protocolo.getIDok(hex_data)
-                self.terminal_id = full_terminal_id
-                
-                self.logger.info(f"TerminalID extraído: {full_terminal_id}")
-                funciones.guardarLog(f"TerminalID={self.terminal_id}")
-                print(f"🆔 TerminalID configurado: {self.terminal_id}")
-                
-                # Enviar respuesta
-                response = protocolo.Enviar0100(self.terminal_id)
-                
+                    self.logger.warning("No se generó mensaje RPG (coordenadas inválidas)")
+                    self.log_rpg_message(hex_data, "", "COORDENADAS_INVALIDAS")
             else:
-                self.logger.warning(f"Tipo de protocolo no soportado: {protocol_type}")
+                self.logger.warning("TerminalID no disponible para conversión RPG")
+                self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
             
         except Exception as e:
             self.logger.error(f"Error procesando mensaje: {e}")
@@ -316,6 +307,28 @@ class TQServerSimplificado:
         if self.server_socket:
             self.server_socket.close()
         self.logger.info("Servidor detenido")
+
+    def is_valid_message_format(self, hex_data: str) -> bool:
+        """
+        Valida si el mensaje tiene el formato TQ correcto
+        """
+        try:
+            # Verificar longitud mínima
+            if len(hex_data) < 20:
+                return False
+            
+            # Verificar que empiece con "24" (header del protocolo TQ)
+            if not hex_data.startswith("24"):
+                return False
+            
+            # Verificar que tenga longitud adecuada para mensaje TQ
+            if len(hex_data) < 50:  # Longitud mínima esperada
+                return False
+            
+            return True
+            
+        except Exception:
+            return False
 
 def main():
     """Función principal"""
