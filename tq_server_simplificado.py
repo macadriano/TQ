@@ -106,8 +106,8 @@ class TQServerSimplificado:
             if not hex_data.startswith('24'):
                 return False
             
-            # Verificar longitud (mensajes TQ suelen tener 100+ caracteres)
-            if len(hex_data) < 80 or len(hex_data) > 200:
+            # Verificar longitud (mensajes TQ suelen tener 80+ caracteres)
+            if len(hex_data) < 60 or len(hex_data) > 200:
                 return False
             
             # Verificar que solo contenga caracteres hexadecimales válidos
@@ -299,6 +299,9 @@ class TQServerSimplificado:
         Procesa un mensaje recibido del cliente
         """
         try:
+            # Log del mensaje recibido
+            self.logger.info(f"Mensaje recibido de {client_address}: {data[:50]}...")
+            
             # PRIMERO: Verificar si es mensaje NMEA (texto)
             try:
                 text_message = data.decode('utf-8', errors='ignore')
@@ -308,13 +311,19 @@ class TQServerSimplificado:
             except:
                 pass
             
-            # Convertir a hexadecimal
+            # SEGUNDO: Verificar si es mensaje NMEA codificado en hex
             hex_data = data.hex()
+            if hex_data.startswith('2a'):  # 2a = '*' en ASCII
+                self.logger.warning(f"Mensaje NMEA en hex descartado de {client_address}: {hex_data[:50]}...")
+                return
             
             # Verificar formato del mensaje
             if not self.is_valid_message_format(hex_data):
                 self.logger.warning(f"Mensaje con formato inválido descartado de {client_address}: {hex_data[:50]}...")
                 return
+            
+            # Log del mensaje TQ válido
+            self.logger.info(f"Mensaje TQ válido recibido de {client_address}: {hex_data[:50]}...")
             
             # Decodificar mensaje
             position_data = self.decode_position_message(hex_data)
