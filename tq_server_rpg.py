@@ -4,6 +4,7 @@
 """
 Servidor TCP para Protocolo TQ con conversión a RPG y reenvío UDP
 """
+# hola mundo
 
 import socket
 import threading
@@ -700,20 +701,6 @@ class TQServerRPG:
             
             speed = int(speed_kmh)  # Convertir a entero para el mensaje RPG
             self.logger.info(f"Velocidad y rumbo extraídos: {speed_knots} nudos ({speed_kmh:.2f} km/h), Rumbo: {heading}°")
-            
-            # Analizar cada grupo de 4 bytes buscando valores razonables
-            data_bytes = bytes.fromhex(hex_str)
-            for i in range(24, len(data_bytes) - 4, 4):
-                chunk = data_bytes[i:i+4]
-                val = int.from_bytes(chunk, byteorder='big', signed=False)
-                
-                # Velocidad (0-200 km/h)
-                if 0 <= val <= 200 and speed == 0:
-                    speed = val
-                
-                # Rumbo (0-360 grados)
-                if 0 <= val <= 360 and heading == 0:
-                    heading = val
             
             return {
                 'device_id': device_id,  # ID para RPG (68133)
