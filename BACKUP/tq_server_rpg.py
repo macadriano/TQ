@@ -370,147 +370,119 @@ class TQServerRPG:
             self.logger.error(f"Error loggeando mensaje RPG: {e}")
 
     def process_message_with_rpg(self, data: bytes, client_id: str):
-    """Procesa un mensaje recibido del cliente"""
-    self.message_count += 1
-    
-    # Log del mensaje raw
-    hex_data = funciones.bytes2hexa(data)
-    self.logger.info(f"Msg #{self.message_count} de {client_id}: {hex_data}")
-    print(f"📨 Msg #{self.message_count} de {client_id}")
-    print(f"   Raw: {hex_data}")
-    
-    try:
-        # ===================== F I L T R O   N M E A 0 1 8 3 ======================
-        # Detecta mensajes que comienzan con '*' y terminan con '#'
+        """Procesa un mensaje recibido del cliente"""
+        self.message_count += 1
+        
+        # Log del mensaje raw
+        hex_data = funciones.bytes2hexa(data)
+        self.logger.info(f"Msg #{self.message_count} de {client_id}: {hex_data}")
+        print(f"📨 Msg #{self.message_count} de {client_id}")
+        print(f"   Raw: {hex_data}")
+        
         try:
-            text_data = data.decode("ascii", errors="ignore").strip()
-        except Exception:
-            text_data = ""
-        
-        if text_data.startswith("*") and text_data.endswith("#"):
-            # Guardar en log específico si existe, o en el general con prefijo
-            try:
-                if hasattr(funciones, "guardarLogNMEA") and callable(funciones.guardarLogNMEA):
-                    funciones.guardarLogNMEA(text_data)
-                else:
-                    funciones.guardarLog(f"[NMEA0183] {text_data}")
-            except Exception as e_log:
-                self.logger.warning(f"No se pudo guardar log NMEA: {e_log}")
+            # Guardar el mensaje en el log
+            funciones.guardarLog(hex_data)
             
-            self.logger.info(f"Mensaje NMEA0183 detectado y filtrado: {text_data}")
-            print(f"⛔ NMEA0183 filtrado: {text_data}")
-            # Dejar traza en el log de RPG para auditoría
-            try:
-                self.log_rpg_message(hex_data, "", "IGNORADO_NMEA")
-            except Exception:
-                pass
-            return
-        # ==========================================================================
-
-        # Guardar el mensaje en el log
-        funciones.guardarLog(hex_data)
-        
-        # Detectar el tipo de protocolo
-        protocol_type = protocolo.getPROTOCOL(hex_data)
-        self.logger.info(f"Tipo de protocolo detectado: {protocol_type}")
-        
-        if protocol_type == "22":
-            # Protocolo de posición - convertir a RPG y reenviar
+            # Detectar el tipo de protocolo
+            protocol_type = protocolo.getPROTOCOL(hex_data)
+            self.logger.info(f"Tipo de protocolo detectado: {protocol_type}")
             
-            # IMPORTANTE: Extraer y guardar el ID del mensaje de posición
-            position_id = protocolo.getIDok(hex_data)
-            if position_id:
-                self.terminal_id = position_id  # ACTUALIZAR el TerminalID
-                self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
-                print(f"🆔 TerminalID actualizado: {position_id}")
-            
-            if len(self.terminal_id) > 0:
-                # Convertir a RPG usando la función existente
-                rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
-                self.logger.info(f"Mensaje RPG generado: {rpg_message}")
+            if protocol_type == "22":
+                # Protocolo de posición - convertir a RPG y reenviar
                 
-                # Reenviar por UDP
-                funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                # IMPORTANTE: Extraer y guardar el ID del mensaje de posición
+                position_id = protocolo.getIDok(hex_data)
+                if position_id:
+                    self.terminal_id = position_id  # ACTUALIZAR el TerminalID
+                    self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
+                    print(f"🆔 TerminalID actualizado: {position_id}")
                 
-                # Log del mensaje RPG
-                self.log_rpg_message(hex_data, rpg_message, "ENVIADO")
-                
-                print(f"🔄 Mensaje RPG enviado por UDP: {rpg_message}")
-                
-                # También guardar en el log UDP
-                funciones.guardarLogUDP(rpg_message)
-                
-            else:
-                self.logger.warning("TerminalID no disponible para conversión RPG")
-                self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
-                
-        elif protocol_type == "01":
-            # Protocolo de registro - obtener TerminalID
-            full_terminal_id = protocolo.getIDok(hex_data)
-            self.terminal_id = full_terminal_id
-            
-            self.logger.info(f"TerminalID extraído: {full_terminal_id}")
-            funciones.guardarLog(f"TerminalID={self.terminal_id}")
-            print(f"🆔 TerminalID configurado: {self.terminal_id}")
-            
-            # Enviar respuesta
-            response = protocolo.Enviar0100(self.terminal_id)
-            
-        else:
-            # Otro tipo de protocolo - intentar decodificar como TQ
-            self.logger.info(f"Protocolo {protocol_type} - intentando decodificación TQ")
-            position_data = self.decode_position_message(data)
-            
-            if position_data:
-                self.logger.info(f"Posición decodificada: {position_data}")
-                self.display_position(position_data, client_id)
-                
-                # IMPORTANTE: Si no tenemos TerminalID, extraerlo del mensaje de posición
-                if len(self.terminal_id) == 0:
-                    position_id = protocolo.getIDok(hex_data)
-                    if position_id:
-                        self.terminal_id = position_id
-                        self.logger.info(f"TerminalID actualizado desde mensaje de posición (protocolo {protocol_type}): {position_id}")
-                        print(f"🆔 TerminalID actualizado: {position_id}")
-                
-                # Guardar posición en archivo CSV
-                self.save_position_to_file(position_data)
-                
-                # Si tenemos TerminalID, convertir a RPG
                 if len(self.terminal_id) > 0:
-                    try:
-                        # CORREGIDO: Usar las coordenadas ya decodificadas en lugar de las funciones de protocolo
-                        # Crear mensaje RPG con formato correcto usando los datos GPS decodificados
-                        # Usar el device_id del mensaje actual en lugar del terminal_id fijo
-                        device_id = position_data.get('device_id', '')
-                        rpg_message = self.create_rpg_message_from_gps(position_data, device_id)
-                        if rpg_message:
-                            funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
-                            self.log_rpg_message(hex_data, rpg_message, "ENVIADO_RPG_GPS")
-                            print(f"🔄 Mensaje RPG creado desde GPS enviado por UDP: {rpg_message}")
-                    except Exception as e:
-                        self.logger.warning(f"No se pudo crear mensaje RPG desde GPS: {e}")
-                        # Fallback: intentar con protocolo personal
-                        try:
-                            rpg_message = protocolo.RGPdesdePERSONAL(hex_data, self.terminal_id)
-                            if rpg_message:
-                                funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
-                                self.log_rpg_message(hex_data, rpg_message, "ENVIADO_PERSONAL")
-                                print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
-                        except:
-                            self.logger.warning("No se pudo convertir a RPG personal")
+                    # Convertir a RPG usando la función existente
+                    rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
+                    self.logger.info(f"Mensaje RPG generado: {rpg_message}")
+                    
+                    # Reenviar por UDP
+                    funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                    
+                    # Log del mensaje RPG
+                    self.log_rpg_message(hex_data, rpg_message, "ENVIADO")
+                    
+                    print(f"🔄 Mensaje RPG enviado por UDP: {rpg_message}")
+                    
+                    # También guardar en el log UDP
+                    funciones.guardarLogUDP(rpg_message)
+                    
                 else:
                     self.logger.warning("TerminalID no disponible para conversión RPG")
+                    self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
                     
-            else:
-                self.logger.warning(f"No se pudo decodificar mensaje de {client_id}")
-                print(f"⚠️  No se pudo decodificar el mensaje")
+            elif protocol_type == "01":
+                # Protocolo de registro - obtener TerminalID
+                full_terminal_id = protocolo.getIDok(hex_data)
+                self.terminal_id = full_terminal_id
                 
-    except Exception as e:
-        self.logger.error(f"Error procesando mensaje de {client_id}: {e}")
-        print(f"❌ Error procesando mensaje: {e}")
-        self.log_rpg_message(hex_data, "", f"ERROR:{str(e)}")
-
+                self.logger.info(f"TerminalID extraído: {full_terminal_id}")
+                funciones.guardarLog(f"TerminalID={self.terminal_id}")
+                print(f"🆔 TerminalID configurado: {self.terminal_id}")
+                
+                # Enviar respuesta
+                response = protocolo.Enviar0100(self.terminal_id)
+                
+            else:
+                # Otro tipo de protocolo - intentar decodificar como TQ
+                self.logger.info(f"Protocolo {protocol_type} - intentando decodificación TQ")
+                position_data = self.decode_position_message(data)
+                
+                if position_data:
+                    self.logger.info(f"Posición decodificada: {position_data}")
+                    self.display_position(position_data, client_id)
+                    
+                    # IMPORTANTE: Si no tenemos TerminalID, extraerlo del mensaje de posición
+                    if len(self.terminal_id) == 0:
+                        position_id = protocolo.getIDok(hex_data)
+                        if position_id:
+                            self.terminal_id = position_id
+                            self.logger.info(f"TerminalID actualizado desde mensaje de posición (protocolo {protocol_type}): {position_id}")
+                            print(f"🆔 TerminalID actualizado: {position_id}")
+                    
+                    # Guardar posición en archivo CSV
+                    self.save_position_to_file(position_data)
+                    
+                    # Si tenemos TerminalID, convertir a RPG
+                    if len(self.terminal_id) > 0:
+                        try:
+                            # CORREGIDO: Usar las coordenadas ya decodificadas en lugar de las funciones de protocolo
+                            # Crear mensaje RPG con formato correcto usando los datos GPS decodificados
+                            # Usar el device_id del mensaje actual en lugar del terminal_id fijo
+                            device_id = position_data.get('device_id', '')
+                            rpg_message = self.create_rpg_message_from_gps(position_data, device_id)
+                            if rpg_message:
+                                funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                                self.log_rpg_message(hex_data, rpg_message, "ENVIADO_RPG_GPS")
+                                print(f"🔄 Mensaje RPG creado desde GPS enviado por UDP: {rpg_message}")
+                        except Exception as e:
+                            self.logger.warning(f"No se pudo crear mensaje RPG desde GPS: {e}")
+                            # Fallback: intentar con protocolo personal
+                            try:
+                                rpg_message = protocolo.RGPdesdePERSONAL(hex_data, self.terminal_id)
+                                if rpg_message:
+                                    funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                                    self.log_rpg_message(hex_data, rpg_message, "ENVIADO_PERSONAL")
+                                    print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
+                            except:
+                                self.logger.warning("No se pudo convertir a RPG personal")
+                    else:
+                        self.logger.warning("TerminalID no disponible para conversión RPG")
+                        
+                else:
+                    self.logger.warning(f"No se pudo decodificar mensaje de {client_id}")
+                    print(f"⚠️  No se pudo decodificar el mensaje")
+                    
+        except Exception as e:
+            self.logger.error(f"Error procesando mensaje de {client_id}: {e}")
+            print(f"❌ Error procesando mensaje: {e}")
+            self.log_rpg_message(hex_data, "", f"ERROR:{str(e)}")
 
     def decode_nmea_message(self, nmea_message: str) -> Dict:
         """Decodifica un mensaje NMEA y extrae las coordenadas"""

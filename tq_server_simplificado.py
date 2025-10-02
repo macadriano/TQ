@@ -184,29 +184,25 @@ class TQServerSimplificado:
             # Guardar el mensaje en el log - USAR FUNCIONES ORIGINALES
             funciones.guardarLog(hex_data)
             
-            # VALIDAR MENSAJE TQ - MÉTODO SIMPLE QUE FUNCIONABA
-            # Verificar si es un mensaje TQ válido (empieza con "24" y tiene longitud adecuada)
-            if not self.is_valid_message_format(hex_data):
-                self.logger.warning(f"Mensaje con formato inválido descartado de {client_id}: {hex_data[:50]}...")
-                return
+            # DETECTAR TIPO DE PROTOCOLO - EXACTO COMO EL ORIGINAL
+            protocol_type = protocolo.getPROTOCOL(hex_data)
+            self.logger.info(f"Tipo de protocolo detectado: {protocol_type}")
             
-            # Log del mensaje TQ válido
-            self.logger.info(f"Mensaje TQ válido recibido de {client_id}: {hex_data[:50]}...")
-            
-            # PROCESAR MENSAJE TQ - MÉTODO DIRECTO
-            # Extraer TerminalID del mensaje
-            position_id = protocolo.getIDok(hex_data)
-            if position_id:
-                self.terminal_id = position_id  # ACTUALIZAR el TerminalID
-                self.logger.info(f"TerminalID actualizado desde mensaje: {position_id}")
-                print(f"🆔 TerminalID actualizado: {position_id}")
-            
-            if len(self.terminal_id) > 0:
-                # Convertir a RPG usando la función existente - EXACTO COMO EL ORIGINAL
-                rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
-                self.logger.info(f"Mensaje RPG generado: {rpg_message}")
+            if protocol_type == "22":
+                # Protocolo de posición - convertir a RPG y reenviar
                 
-                if rpg_message:  # Solo enviar si se generó mensaje RPG válido
+                # IMPORTANTE: Extraer y guardar el ID del mensaje de posición
+                position_id = protocolo.getIDok(hex_data)
+                if position_id:
+                    self.terminal_id = position_id  # ACTUALIZAR el TerminalID
+                    self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
+                    print(f"🆔 TerminalID actualizado: {position_id}")
+                
+                if len(self.terminal_id) > 0:
+                    # Crear mensaje RPG SIMPLE - formato que funciona con el servidor receptor
+                    rpg_message = self.create_simple_rpg_message(hex_data)
+                    self.logger.info(f"Mensaje RPG generado: {rpg_message}")
+                    
                     # Reenviar por UDP - USAR FUNCIONES ORIGINALES
                     funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
                     
@@ -217,12 +213,25 @@ class TQServerSimplificado:
                     
                     # También guardar en el log UDP - USAR FUNCIONES ORIGINALES
                     funciones.guardarLogUDP(rpg_message)
+                    
                 else:
-                    self.logger.warning("No se generó mensaje RPG (coordenadas inválidas)")
-                    self.log_rpg_message(hex_data, "", "COORDENADAS_INVALIDAS")
+                    self.logger.warning("TerminalID no disponible para conversión RPG")
+                    self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
+                    
+            elif protocol_type == "01":
+                # Protocolo de registro - obtener TerminalID
+                full_terminal_id = protocolo.getIDok(hex_data)
+                self.terminal_id = full_terminal_id
+                
+                self.logger.info(f"TerminalID extraído: {full_terminal_id}")
+                funciones.guardarLog(f"TerminalID={self.terminal_id}")
+                print(f"🆔 TerminalID configurado: {self.terminal_id}")
+                
+                # Enviar respuesta
+                response = protocolo.Enviar0100(self.terminal_id)
+                
             else:
-                self.logger.warning("TerminalID no disponible para conversión RPG")
-                self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
+                self.logger.warning(f"Tipo de protocolo no soportado: {protocol_type}")
             
         except Exception as e:
             self.logger.error(f"Error procesando mensaje: {e}")
@@ -308,27 +317,57 @@ class TQServerSimplificado:
             self.server_socket.close()
         self.logger.info("Servidor detenido")
 
-    def is_valid_message_format(self, hex_data: str) -> bool:
+    def create_simple_rpg_message(self, hex_data: str) -> str:
         """
-        Valida si el mensaje tiene el formato TQ correcto
+        Crea un mensaje RPG simple en el formato que funciona con el servidor receptor
+        Formato: >RGP021025204356-3441.9250-05835>
         """
         try:
-            # Verificar longitud mínima
-            if len(hex_data) < 20:
-                return False
+            # Extraer fecha y hora GPS
+            fecha_gps = protocolo.getFECHA_GPS_TQ(hex_data)  # "02/10/25"
+            hora_gps = protocolo.getHORA_GPS_TQ(hex_data)    # "20:43:56"
             
-            # Verificar que empiece con "24" (header del protocolo TQ)
-            if not hex_data.startswith("24"):
-                return False
+            # Convertir fecha de DD/MM/YY a DDMMYY
+            if '/' in fecha_gps:
+                day, month, year = fecha_gps.split('/')
+                fecha_rpg = f"{day}{month}{year}"
+            else:
+                fecha_rpg = fecha_gps
             
-            # Verificar que tenga longitud adecuada para mensaje TQ
-            if len(hex_data) < 50:  # Longitud mínima esperada
-                return False
+            # Convertir hora de HH:MM:SS a HHMMSS
+            if ':' in hora_gps:
+                hora_rpg = hora_gps.replace(':', '')
+            else:
+                hora_rpg = hora_gps
             
-            return True
+            # Extraer coordenadas
+            latitude = protocolo.getLATchino(hex_data)
+            longitude = protocolo.getLONchino(hex_data)
             
-        except Exception:
-            return False
+            # Validar coordenadas
+            if abs(latitude) < 0.000001 and abs(longitude) < 0.000001:
+                return ""  # No enviar si no hay coordenadas válidas
+            
+            # Formatear coordenadas para RPG simple
+            # Latitud: convertir a formato GGMM.MMMM
+            lat_grados = abs(int(latitude))
+            lat_minutos = abs((latitude - int(latitude)) * 60)
+            lat_formatted = f"{lat_grados:02d}{lat_minutos:06.3f}"
+            
+            # Longitud: convertir a formato GGGMM.MMMM
+            lon_grados = abs(int(longitude))
+            lon_minutos = abs((longitude - int(longitude)) * 60)
+            lon_formatted = f"{lon_grados:03d}{lon_minutos:06.3f}"
+            
+            # Crear mensaje RPG simple
+            rpg_message = f">RGP{fecha_rpg}{hora_rpg}-{lat_formatted}-{lon_formatted}>"
+            
+            return rpg_message
+            
+        except Exception as e:
+            self.logger.error(f"Error creando mensaje RPG simple: {e}")
+            return ""
+
 
 def main():
     """Función principal"""
