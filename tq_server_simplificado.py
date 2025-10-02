@@ -31,6 +31,7 @@ class TQServerSimplificado:
         self.clients: Dict[str, socket.socket] = {}
         self.running = False
         self.message_count = 0
+        self.terminal_id = ""
         
         # Configurar logging
         self.setup_logging()
@@ -150,139 +151,10 @@ class TQServerSimplificado:
             self.logger.warning(f"Error validando formato de mensaje: {e}")
             return False
 
-    def decode_position_message(self, hex_data: str) -> Optional[Dict]:
-        """
-        Decodifica un mensaje de posición del protocolo TQ simplificado
-        """
-        try:
-            # Usar las funciones existentes del protocolo
-            device_id = protocolo.getIDok(hex_data)
-            
-            # Extraer fecha y hora GPS
-            fecha_gps = protocolo.getFECHA_GPS_TQ(hex_data)
-            hora_gps = protocolo.getHORA_GPS_TQ(hex_data)
-            
-            # Extraer coordenadas
-            latitude = protocolo.getLATchino(hex_data)
-            longitude = protocolo.getLONchino(hex_data)
-            
-            # Extraer velocidad y rumbo
-            speed_knots = protocolo.getVELchino(hex_data)
-            heading = protocolo.getRUMBOchino(hex_data)
-            
-            # Convertir velocidad a km/h
-            speed_kmh = speed_knots * 1.852
-            
-            # Crear timestamp GPS
-            gps_timestamp = self.parse_gps_datetime(fecha_gps, hora_gps)
-            
-            return {
-                'device_id': device_id,
-                'latitude': latitude,
-                'longitude': longitude,
-                'speed_kmh': speed_kmh,
-                'speed_knots': speed_knots,
-                'heading': heading,
-                'gps_timestamp': gps_timestamp,
-                'fecha_gps': fecha_gps,
-                'hora_gps': hora_gps
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error decodificando mensaje de posición: {e}")
-            return None
 
-    def parse_gps_datetime(self, fecha_gps: str, hora_gps: str) -> datetime:
-        """
-        Parsea fecha y hora GPS del protocolo TQ a datetime
-        """
-        try:
-            # Formato de fecha: DD/MM/YY
-            if '/' in fecha_gps:
-                day, month, year = fecha_gps.split('/')
-                year = 2000 + int(year)
-            else:
-                # Formato alternativo
-                day, month, year = fecha_gps[:2], fecha_gps[2:4], fecha_gps[4:6]
-                year = 2000 + int(year)
-            
-            # Formato de hora: HH:MM:SS
-            hour, minute, second = hora_gps.split(':')
-            
-            return datetime(year, int(month), int(day), int(hour), int(minute), int(second))
-            
-        except Exception as e:
-            self.logger.warning(f"Error parseando fecha GPS: {e}")
-            return datetime.now()
 
-    def save_position_to_csv(self, position_data: Dict):
-        """
-        Guarda la posición en el archivo CSV
-        """
-        try:
-            with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow([
-                    position_data['device_id'],
-                    position_data['latitude'],
-                    position_data['longitude'],
-                    position_data['heading'],
-                    position_data['speed_kmh'],
-                    position_data['speed_knots'],
-                    position_data['fecha_gps'],
-                    position_data['hora_gps'],
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                ])
-        except Exception as e:
-            self.logger.error(f"Error guardando posición en CSV: {e}")
 
-    def create_rpg_message(self, position_data: Dict) -> str:
-        """
-        Crea un mensaje RPG con formato correcto
-        """
-        try:
-            # Formatear coordenadas para RPG
-            lat_str = f"{abs(position_data['latitude']):.6f}"
-            lon_str = f"{abs(position_data['longitude']):.6f}"
-            
-            # Agregar signo según la dirección
-            if position_data['latitude'] < 0:
-                lat_str += 'S'
-            else:
-                lat_str += 'N'
-                
-            if position_data['longitude'] < 0:
-                lon_str += 'W'
-            else:
-                lon_str += 'E'
-            
-            # Crear mensaje RPG
-            rpg_message = f"*HQ,{position_data['device_id']},V1,{position_data['hora_gps']},A,{lat_str},{lon_str},{position_data['speed_kmh']:.1f},{position_data['heading']:.0f},{position_data['fecha_gps']},#"
-            
-            return rpg_message
-            
-        except Exception as e:
-            self.logger.error(f"Error creando mensaje RPG: {e}")
-            return ""
 
-    def send_rpg_message(self, rpg_message: str) -> bool:
-        """
-        Envía el mensaje RPG al servidor UDP
-        """
-        try:
-            # Crear socket UDP
-            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            
-            # Enviar mensaje
-            udp_socket.sendto(rpg_message.encode('utf-8'), (self.udp_host, self.udp_port))
-            udp_socket.close()
-            
-            self.logger.info(f"Mensaje RPG enviado: {rpg_message}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error enviando mensaje RPG: {e}")
-            return False
 
     def log_rpg_message(self, original_message: str, rpg_message: str, status: str):
         """
@@ -297,58 +169,74 @@ class TQServerSimplificado:
 
     def process_message(self, data: bytes, client_address: Tuple[str, int]):
         """
-        Procesa un mensaje recibido del cliente
+        Procesa un mensaje recibido del cliente - SIGUIENDO EL FLUJO EXACTO DEL SERVIDOR ORIGINAL
         """
         try:
-            # Log del mensaje recibido
-            self.logger.info(f"Mensaje recibido de {client_address}: {data[:50]}...")
+            self.message_count += 1
+            client_id = f"{client_address[0]}:{client_address[1]}"
             
-            # PRIMERO: Verificar si es mensaje NMEA (texto)
-            try:
-                text_message = data.decode('utf-8', errors='ignore')
-                if text_message.startswith('*') or ',' in text_message:
-                    self.logger.warning(f"Mensaje NMEA descartado de {client_address}: {text_message[:50]}...")
-                    return
-            except:
-                pass
+            # Log del mensaje raw - USAR FUNCIONES ORIGINALES
+            hex_data = funciones.bytes2hexa(data)
+            self.logger.info(f"Msg #{self.message_count} de {client_id}: {hex_data}")
+            print(f"📨 Msg #{self.message_count} de {client_id}")
+            print(f"   Raw: {hex_data}")
             
-            # SEGUNDO: Verificar si es mensaje NMEA codificado en hex
-            hex_data = data.hex()
-            if hex_data.startswith('2a'):  # 2a = '*' en ASCII
-                self.logger.warning(f"Mensaje NMEA en hex descartado de {client_address}: {hex_data[:50]}...")
-                return
+            # Guardar el mensaje en el log - USAR FUNCIONES ORIGINALES
+            funciones.guardarLog(hex_data)
             
-            # Verificar formato del mensaje
-            if not self.is_valid_message_format(hex_data):
-                self.logger.warning(f"Mensaje con formato inválido descartado de {client_address}: {hex_data[:50]}...")
-                return
+            # Detectar el tipo de protocolo - USAR FUNCIONES ORIGINALES
+            protocol_type = protocolo.getPROTOCOL(hex_data)
+            self.logger.info(f"Tipo de protocolo detectado: {protocol_type}")
             
-            # Log del mensaje TQ válido
-            self.logger.info(f"Mensaje TQ válido recibido de {client_address}: {hex_data[:50]}...")
-            
-            # Decodificar mensaje
-            position_data = self.decode_position_message(hex_data)
-            if not position_data:
-                self.logger.warning(f"Error decodificando mensaje de {client_address}")
-                return
-            
-            # Guardar posición
-            self.save_position_to_csv(position_data)
-            
-            # Crear y enviar mensaje RPG
-            rpg_message = self.create_rpg_message(position_data)
-            if rpg_message:
-                success = self.send_rpg_message(rpg_message)
-                status = "ENVIADO" if success else "ERROR_ENVIO"
-                self.log_rpg_message(hex_data, rpg_message, status)
-            
-            # Log de posición procesada
-            self.logger.info(f"Posición procesada: ID={position_data['device_id']}, "
-                           f"Lat={position_data['latitude']:.6f}, Lon={position_data['longitude']:.6f}, "
-                           f"Vel={position_data['speed_kmh']:.1f} km/h, Rumbo={position_data['heading']:.0f}°")
+            if protocol_type == "22":
+                # Protocolo de posición - convertir a RPG y reenviar
+                
+                # IMPORTANTE: Extraer y guardar el ID del mensaje de posición
+                position_id = protocolo.getIDok(hex_data)
+                if position_id:
+                    self.terminal_id = position_id  # ACTUALIZAR el TerminalID
+                    self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
+                    print(f"🆔 TerminalID actualizado: {position_id}")
+                
+                if len(self.terminal_id) > 0:
+                    # Convertir a RPG usando la función existente - EXACTO COMO EL ORIGINAL
+                    rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
+                    self.logger.info(f"Mensaje RPG generado: {rpg_message}")
+                    
+                    # Reenviar por UDP - USAR FUNCIONES ORIGINALES
+                    funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                    
+                    # Log del mensaje RPG
+                    self.log_rpg_message(hex_data, rpg_message, "ENVIADO")
+                    
+                    print(f"🔄 Mensaje RPG enviado por UDP: {rpg_message}")
+                    
+                    # También guardar en el log UDP - USAR FUNCIONES ORIGINALES
+                    funciones.guardarLogUDP(rpg_message)
+                    
+                else:
+                    self.logger.warning("TerminalID no disponible para conversión RPG")
+                    self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
+                    
+            elif protocol_type == "01":
+                # Protocolo de registro - obtener TerminalID
+                full_terminal_id = protocolo.getIDok(hex_data)
+                self.terminal_id = full_terminal_id
+                
+                self.logger.info(f"TerminalID extraído: {full_terminal_id}")
+                funciones.guardarLog(f"TerminalID={self.terminal_id}")
+                print(f"🆔 TerminalID configurado: {self.terminal_id}")
+                
+                # Enviar respuesta
+                response = protocolo.Enviar0100(self.terminal_id)
+                
+            else:
+                self.logger.warning(f"Tipo de protocolo no soportado: {protocol_type}")
             
         except Exception as e:
             self.logger.error(f"Error procesando mensaje: {e}")
+            print(f"❌ Error procesando mensaje: {e}")
+            self.log_rpg_message(hex_data, "", f"ERROR:{str(e)}")
 
     def handle_client(self, client_socket: socket.socket, client_address: Tuple[str, int]):
         """
@@ -394,7 +282,7 @@ class TQServerSimplificado:
             self.running = True
             self.logger.info(f"Servidor TQ Simplificado iniciado en {self.host}:{self.port}")
             self.logger.info(f"Reenvío RPG a {self.udp_host}:{self.udp_port}")
-            self.logger.info("Solo procesa mensajes del formato RECORRIDO61674_011025.txt")
+            self.logger.info("Procesa mensajes TQ binarios y los convierte a formato RPG para reenvío UDP")
             
             while self.running:
                 try:
@@ -446,7 +334,7 @@ def main():
     print("=" * 70)
     print(f"📡 Servidor: {args.host}:{args.port}")
     print(f"🎯 Reenvío RPG: {args.udp_host}:{args.udp_port}")
-    print("📋 Solo procesa mensajes del formato RECORRIDO61674_011025.txt")
+    print("📋 Procesa mensajes TQ binarios y los convierte a formato RPG para reenvío UDP")
     print("=" * 70)
     
     # Crear servidor
