@@ -29,18 +29,34 @@ Servidor TQ simplificado que **solo procesa mensajes del formato específico** e
 
 ### 1. Iniciar el Servidor
 
+**Windows:**
 ```bash
-# Opción 1: Usar el script de inicio
 start_server_simplificado.bat
+```
 
-# Opción 2: Ejecutar directamente
+**Linux/Unix:**
+```bash
+./start_server_simplificado.sh
+```
+
+**Directo:**
+```bash
 python tq_server_simplificado.py --host 0.0.0.0 --port 5003 --udp-host 179.43.115.190 --udp-port 7007
 ```
 
-### 2. Probar el Servidor
+### 2. Verificar Estado
+```bash
+./server_status_simplificado.sh
+```
 
+### 3. Probar el Servidor
 ```bash
 python test_server_simplificado.py
+```
+
+### 4. Detener el Servidor
+```bash
+./stop_server_simplificado.sh
 ```
 
 ## Parámetros del Servidor
@@ -54,19 +70,24 @@ python test_server_simplificado.py
 
 ### ✅ Mensajes Válidos
 ```
+# Cualquier ID de equipo válido:
 24207666167410521901102534381299060583274822016334fffffbff0006fdd300000000000000df54000000
+24207666813310525201102534380885060583277462002315fffffbff0006fdd300000000000000df54000001
+24207661234510525301102534380878060583277522003333fffffbff0006fdd300000000000000df54000002
 ```
 
 **Características:**
-- Debe empezar con `242076661674`
-- Longitud mínima de 60 caracteres
+- Debe empezar con `24` (protocolo TQ)
+- Longitud entre 80-200 caracteres
 - Solo caracteres hexadecimales válidos
+- Cualquier ID de equipo válido
 
 ### ❌ Mensajes Rechazados
 - Mensajes NMEA (`*HQ,123456,V1,...`)
-- Mensajes que no empiecen con `242076661674`
-- Mensajes con longitud insuficiente
+- Mensajes que no empiecen con `24`
+- Mensajes con longitud insuficiente o excesiva
 - Mensajes con caracteres no hexadecimales
+- Mensajes de texto o con comas
 
 ## Logs del Servidor
 
