@@ -995,7 +995,7 @@ class TQServerRPG:
             seq = "01"
             
             # Construir mensaje RPG principal
-            rpg_main = f"RGP{timestamp}{lat_str}{lon_str}{heading_str}{speed_str}{status}"
+            rpg_main = f"RGP{timestamp}{lat_str}{lon_str}{speed_str}{heading_str}{status}"
             
             # Construir mensaje completo con formato correcto
             # CORREGIDO: Agregar "000001" antes del ";&01" según protocolo GEO5
