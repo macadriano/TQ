@@ -137,6 +137,12 @@ class TQServerSimplificado:
             except:
                 pass
             
+            # Verificación adicional: el mensaje TQ debe tener una estructura específica
+            # Los mensajes TQ reales tienen patrones específicos en sus primeros bytes
+            # Verificar que no sea un mensaje NMEA codificado en hex
+            if hex_data.startswith('2a'):  # 2a = '*' en ASCII
+                return False
+            
             return True
             
         except Exception as e:
@@ -293,6 +299,15 @@ class TQServerSimplificado:
         Procesa un mensaje recibido del cliente
         """
         try:
+            # PRIMERO: Verificar si es mensaje NMEA (texto)
+            try:
+                text_message = data.decode('utf-8', errors='ignore')
+                if text_message.startswith('*') or ',' in text_message:
+                    self.logger.warning(f"Mensaje NMEA descartado de {client_address}: {text_message[:50]}...")
+                    return
+            except:
+                pass
+            
             # Convertir a hexadecimal
             hex_data = data.hex()
             
