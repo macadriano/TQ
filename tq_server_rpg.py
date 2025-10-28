@@ -207,17 +207,17 @@ class TQServerRPG:
                 #    return False, f"Salto excesivo: {distance:.1f}m en {time_diff/60:.1f}min"
                 
                 # FILTRO 4: Velocidad incoherente (NUEVO)
-                speed_diff = abs(calculated_speed - speed_kmh)
-                if speed_diff > 20 and distance > 100:
-                    return False, f"Velocidad incoherente: calc={calculated_speed:.1f} vs rep={speed_kmh:.1f} km/h"
+                #speed_diff = abs(calculated_speed - speed_kmh)
+                #if speed_diff > 20 and distance > 100:
+                #    return False, f"Velocidad incoherente: calc={calculated_speed:.1f} vs rep={speed_kmh:.1f} km/h"
                 
                 # FILTRO 5: Protección de detenciones reales (NUEVO)
                 # Si ambos puntos reportan velocidad baja Y la distancia es pequeña, es detención real
                 is_real_stop = (speed_kmh < 5 and last_speed < 5 and distance < 100)
                 
                 # Salto estacionario: reporta estar parado pero saltó mucho (EXCEPTO detenciones reales)
-                if speed_kmh < 1 and distance > 300 and not is_real_stop:
-                    return False, f"Salto estacionario: {distance:.1f}m reportando parado"
+                #if speed_kmh < 1 and distance > 300 and not is_real_stop:
+                #    return False, f"Salto estacionario: {distance:.1f}m reportando parado"
             
             return True, ""
             
