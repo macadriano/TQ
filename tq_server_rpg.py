@@ -199,8 +199,8 @@ class TQServerRPG:
                     calculated_speed = 0
                 
                 # FILTRO 1: Salto sospechoso original
-                if distance > 300 and time_diff < 10:
-                    return False, f"Salto sospechoso: {distance:.1f}m en {time_diff:.1f}s"
+                #if distance > 300 and time_diff < 10:
+                #    return False, f"Salto sospechoso: {distance:.1f}m en {time_diff:.1f}s"
                 
                 # FILTRO 3: Saltos excesivos (NUEVO) - Evita líneas transversales
                 #if distance > 1000 and time_diff < 300:  # >1km en <5min
