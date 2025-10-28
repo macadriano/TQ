@@ -203,8 +203,8 @@ class TQServerRPG:
                     return False, f"Salto sospechoso: {distance:.1f}m en {time_diff:.1f}s"
                 
                 # FILTRO 3: Saltos excesivos (NUEVO) - Evita líneas transversales
-                if distance > 1000 and time_diff < 300:  # >1km en <5min
-                    return False, f"Salto excesivo: {distance:.1f}m en {time_diff/60:.1f}min"
+                #if distance > 1000 and time_diff < 300:  # >1km en <5min
+                #    return False, f"Salto excesivo: {distance:.1f}m en {time_diff/60:.1f}min"
                 
                 # FILTRO 4: Velocidad incoherente (NUEVO)
                 speed_diff = abs(calculated_speed - speed_kmh)
