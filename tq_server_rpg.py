@@ -46,12 +46,33 @@ class TQServerRPG:
         # Configurar logging
         self.setup_logging()
         
-        # Configurar archivos
-        self.positions_file = 'positions_log.csv'
-        self.rpg_log_file = 'rpg_messages.log'
+        # Configurar archivos - se actualizan diariamente
+        self.update_log_files()
         self.setup_positions_file()
         self.setup_rpg_log_file()
 
+    def get_daily_log_filename(self, base_name, extension='log'):
+        """
+        Genera el nombre de archivo de log diario con formato logs/BASE_NAME_DDMMYY.ext
+        Crea la carpeta logs/ si no existe
+        """
+        # Crear carpeta logs/ si no existe
+        if not os.path.exists('logs'):
+            os.makedirs('logs')
+        
+        # Obtener fecha actual en formato DDMMYY
+        now = datetime.now()
+        fecha_str = now.strftime('%d%m%y')  # DDMMYY
+        
+        # Construir nombre de archivo
+        filename = f"logs/{base_name}_{fecha_str}.{extension}"
+        return filename
+    
+    def update_log_files(self):
+        """Actualiza los nombres de archivos de log para el día actual"""
+        self.positions_file = self.get_daily_log_filename('LOG_POSITIONS', 'csv')
+        self.rpg_log_file = self.get_daily_log_filename('LOG_RPG', 'log')
+    
     def setup_logging(self):
         """Configura el sistema de logging"""
         self.logger = logging.getLogger('TQServerRPG')
@@ -62,7 +83,9 @@ class TQServerRPG:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        file_handler = logging.FileHandler('tq_server_rpg.log', encoding='utf-8')
+        # Usar log diario para el archivo del servidor
+        log_file = self.get_daily_log_filename('LOG_SERVER', 'log')
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
         

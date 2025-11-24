@@ -1,5 +1,6 @@
 import binascii
 import socket
+import os
 from datetime import datetime, timedelta
 
 def bytes2hexa(valor_bytes):
@@ -54,26 +55,51 @@ def getID(cadena):
     7E	Ending
     """
 
+def get_daily_log_filename(base_name):
+    """
+    Genera el nombre de archivo de log diario con formato logs/BASE_NAME_DDMMYY.txt
+    Crea la carpeta logs/ si no existe
+    """
+    # Crear carpeta logs/ si no existe
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+    
+    # Obtener fecha actual en formato DDMMYY
+    now = datetime.now()
+    fecha_str = now.strftime('%d%m%y')  # DDMMYY
+    
+    # Construir nombre de archivo
+    filename = f"logs/{base_name}_{fecha_str}.txt"
+    return filename
+
 def guardarLog(cadena):
-    archivo = open("log3.txt", "a")
+    archivo_path = get_daily_log_filename("LOG")
+    archivo = open(archivo_path, "a")
     fechaHora = getFechaHora()
     archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()
 
-def guardarLogArchivo(cadena,archivo):
-    archivo = open(archivo, "a")
+def guardarLogArchivo(cadena, base_name):
+    """
+    Guarda log en archivo con nombre base especificado
+    El archivo se creará en logs/ con formato BASE_NAME_DDMMYY.txt
+    """
+    archivo_path = get_daily_log_filename(base_name)
+    archivo = open(archivo_path, "a")
     fechaHora = getFechaHora()
     archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()	
 	
 def guardarLogPersonal(cadena):
-    archivo = open("logPersonal.txt", "a")
+    archivo_path = get_daily_log_filename("LOG_PERSONAL")
+    archivo = open(archivo_path, "a")
     fechaHora = getFechaHora()
     archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()
 
 def guardarLogUDP(cadena):
-    archivo = open("logUDP.txt", "a")
+    archivo_path = get_daily_log_filename("LOG_UDP")
+    archivo = open(archivo_path, "a")
     fechaHora = getFechaHora()
     archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()
