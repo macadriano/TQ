@@ -243,8 +243,8 @@ settings_local.py
 # ============================================
 # Carpetas específicas del proyecto
 # ============================================
-# Carpeta varios (si contiene scripts temporales)
-# varios/
+# Carpeta varios (contiene scripts y archivos históricos)
+varios/
 
 # Carpeta -Force (parece temporal)
 -Force/
