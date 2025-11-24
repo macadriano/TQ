@@ -5,9 +5,10 @@
 # Configuración
 SCRIPT_NAME="tq_server_rpg.py"
 PID_FILE="/tmp/tq_server_rpg.pid"
-LOG_FILE="tq_server_rpg.log"
-POSITIONS_FILE="positions_log.csv"
-RPG_LOG_FILE="rpg_messages.log"
+LOG_DIR="logs"
+
+# Obtener el archivo de log más reciente
+LATEST_LOG=$(ls -t ${LOG_DIR}/LOG_*.txt 2>/dev/null | head -1)
 
 # Colores para output
 RED='\033[0;31m'
@@ -17,8 +18,9 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}📊 ESTADO DEL SERVIDOR TQ+RPG${NC}"
-echo "=================================="
+echo -e "${BLUE}=====================================${NC}"
+echo -e "${BLUE}  ESTADO DEL SERVIDOR TQ+RPG${NC}"
+echo -e "${BLUE}=====================================${NC}"
 
 # Función para obtener información del proceso
 get_process_info() {
@@ -30,133 +32,142 @@ get_process_info() {
         local cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ')
         local mem=$(ps -p "$pid" -o %mem= 2>/dev/null | tr -d ' ')
         
-        echo -e "   ${GREEN}✅ Estado:${NC} Ejecutándose"
-        echo -e "   ${BLUE}📊 PID:${NC} $pid"
-        echo -e "   ${BLUE}🕐 Iniciado:${NC} $start_time"
-        echo -e "   ${BLUE}💻 CPU:${NC} ${cpu}%"
-        echo -e "   ${BLUE}💾 Memoria:${NC} ${mem}%"
-        echo -e "   ${BLUE}📝 Comando:${NC} $cmd"
+        echo -e "   ${GREEN}[OK] Estado:${NC} Ejecutandose"
+        echo -e "   ${BLUE}PID:${NC} $pid"
+        echo -e "   ${BLUE}Iniciado:${NC} $start_time"
+        echo -e "   ${BLUE}CPU:${NC} ${cpu}%"
+        echo -e "   ${BLUE}Memoria:${NC} ${mem}%"
+        echo -e "   ${BLUE}Comando:${NC} $cmd"
         return 0
     else
-        echo -e "   ${RED}❌ Estado:${NC} No ejecutándose"
+        echo -e "   ${RED}[ERROR] Estado:${NC} No ejecutandose"
         return 1
     fi
 }
 
 # Verificar archivo PID
+echo -e "\n${CYAN}--- PROCESO DEL SERVIDOR ---${NC}"
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
-    echo -e "${BLUE}📁 Archivo PID encontrado: $PID_FILE${NC}"
-    echo -e "${BLUE}📊 PID registrado: $PID${NC}"
+    echo -e "${BLUE}Archivo PID:${NC} $PID_FILE"
+    echo -e "${BLUE}PID registrado:${NC} $PID"
     
     if get_process_info "$PID"; then
         SERVER_RUNNING=true
     else
-        echo -e "${YELLOW}⚠️  El PID registrado no está ejecutándose${NC}"
+        echo -e "${YELLOW}[WARN] El PID registrado no esta ejecutandose${NC}"
         SERVER_RUNNING=false
     fi
 else
-    echo -e "${YELLOW}⚠️  No se encuentra archivo PID: $PID_FILE${NC}"
+    echo -e "${YELLOW}[WARN] No se encuentra archivo PID: $PID_FILE${NC}"
     SERVER_RUNNING=false
 fi
 
 # Buscar otros procesos del servidor
-echo -e "\n${BLUE}🔍 Buscando procesos del servidor...${NC}"
+echo -e "\n${CYAN}--- BUSQUEDA DE PROCESOS ---${NC}"
 ALL_PIDS=$(pgrep -f "$SCRIPT_NAME")
 
 if [ -n "$ALL_PIDS" ]; then
-    echo -e "${GREEN}📋 Procesos encontrados: $ALL_PIDS${NC}"
+    echo -e "${GREEN}[OK] Procesos encontrados: $ALL_PIDS${NC}"
     
     # Si el PID registrado no está ejecutándose pero hay otros procesos
     if [ "$SERVER_RUNNING" = false ]; then
-        echo -e "${YELLOW}⚠️  Hay procesos ejecutándose pero no están registrados en PID file${NC}"
-        echo -e "${BLUE}🔄 Información de procesos encontrados:${NC}"
+        echo -e "${YELLOW}[WARN] Hay procesos ejecutandose pero no estan registrados en PID file${NC}"
+        echo -e "${BLUE}Informacion de procesos encontrados:${NC}"
         for pid in $ALL_PIDS; do
             echo -e "\n${CYAN}--- Proceso PID: $pid ---${NC}"
             get_process_info "$pid"
         done
     fi
 else
-    echo -e "${RED}❌ No se encontraron procesos del servidor${NC}"
+    echo -e "${RED}[ERROR] No se encontraron procesos del servidor${NC}"
 fi
 
 # Verificar archivos de log
-echo -e "\n${BLUE}📁 ARCHIVOS DE LOG:${NC}"
+echo -e "\n${CYAN}--- ARCHIVOS DE LOG ---${NC}"
 
-if [ -f "$LOG_FILE" ]; then
-    LOG_SIZE=$(du -h "$LOG_FILE" | cut -f1)
-    LOG_LINES=$(wc -l < "$LOG_FILE" 2>/dev/null || echo "0")
-    echo -e "   ${GREEN}✅ Log principal:${NC} $LOG_FILE"
-    echo -e "      ${BLUE}Tamaño:${NC} $LOG_SIZE"
-    echo -e "      ${BLUE}Líneas:${NC} $LOG_LINES"
+if [ -d "$LOG_DIR" ]; then
+    echo -e "${GREEN}[OK] Directorio de logs:${NC} $LOG_DIR"
+    
+    # Listar archivos de log
+    LOG_COUNT=$(ls -1 ${LOG_DIR}/LOG_*.txt 2>/dev/null | wc -l)
+    if [ "$LOG_COUNT" -gt 0 ]; then
+        echo -e "${BLUE}Total de archivos de log:${NC} $LOG_COUNT"
+        
+        # Mostrar últimos 3 archivos
+        echo -e "\n${BLUE}Ultimos archivos de log:${NC}"
+        ls -lth ${LOG_DIR}/LOG_*.txt 2>/dev/null | head -3 | awk '{print "   " $9 " (" $5 ")"}'
+    else
+        echo -e "${YELLOW}[WARN] No se encontraron archivos de log${NC}"
+    fi
+else
+    echo -e "${YELLOW}[WARN] Directorio de logs no existe: $LOG_DIR${NC}"
+fi
+
+# Mostrar información del log más reciente
+if [ -n "$LATEST_LOG" ] && [ -f "$LATEST_LOG" ]; then
+    LOG_SIZE=$(du -h "$LATEST_LOG" | cut -f1)
+    LOG_LINES=$(wc -l < "$LATEST_LOG" 2>/dev/null || echo "0")
+    LOG_NAME=$(basename "$LATEST_LOG")
+    
+    echo -e "\n${GREEN}[OK] Log actual:${NC} $LOG_NAME"
+    echo -e "   ${BLUE}Tamaño:${NC} $LOG_SIZE"
+    echo -e "   ${BLUE}Lineas:${NC} $LOG_LINES"
     
     # Mostrar últimas líneas del log
-    echo -e "\n${BLUE}📋 Últimas 5 líneas del log:${NC}"
-    tail -5 "$LOG_FILE" | sed 's/^/   /'
+    echo -e "\n${BLUE}Ultimas 10 lineas del log:${NC}"
+    echo -e "${CYAN}---${NC}"
+    tail -10 "$LATEST_LOG" | sed 's/^/   /'
+    echo -e "${CYAN}---${NC}"
 else
-    echo -e "   ${YELLOW}⚠️  Log principal:${NC} $LOG_FILE (no encontrado)"
-fi
-
-if [ -f "$POSITIONS_FILE" ]; then
-    POS_SIZE=$(du -h "$POSITIONS_FILE" | cut -f1)
-    POS_LINES=$(wc -l < "$POSITIONS_FILE" 2>/dev/null || echo "0")
-    echo -e "   ${GREEN}✅ Log posiciones:${NC} $POSITIONS_FILE"
-    echo -e "      ${BLUE}Tamaño:${NC} $POS_SIZE"
-    echo -e "      ${BLUE}Registros:${NC} $((POS_LINES - 1)) posiciones"
-else
-    echo -e "   ${YELLOW}⚠️  Log posiciones:${NC} $POSITIONS_FILE (no encontrado)"
-fi
-
-if [ -f "$RPG_LOG_FILE" ]; then
-    RPG_SIZE=$(du -h "$RPG_LOG_FILE" | cut -f1)
-    RPG_LINES=$(wc -l < "$RPG_LOG_FILE" 2>/dev/null || echo "0")
-    echo -e "   ${GREEN}✅ Log RPG:${NC} $RPG_LOG_FILE"
-    echo -e "      ${BLUE}Tamaño:${NC} $RPG_SIZE"
-    echo -e "      ${BLUE}Mensajes:${NC} $RPG_LINES"
-else
-    echo -e "   ${YELLOW}⚠️  Log RPG:${NC} $RPG_LOG_FILE (no encontrado)"
+    echo -e "\n${YELLOW}[WARN] No se encontro archivo de log actual${NC}"
 fi
 
 # Verificar puertos
-echo -e "\n${BLUE}🌐 PUERTOS DE RED:${NC}"
+echo -e "\n${CYAN}--- PUERTOS DE RED ---${NC}"
 
 # Puerto TCP 5003
 if netstat -tln 2>/dev/null | grep -q ":5003 "; then
-    echo -e "   ${GREEN}✅ Puerto TCP 5003:${NC} Escuchando"
+    echo -e "${GREEN}[OK] Puerto TCP 5003:${NC} Escuchando"
 else
-    echo -e "   ${RED}❌ Puerto TCP 5003:${NC} No escuchando"
+    echo -e "${RED}[ERROR] Puerto TCP 5003:${NC} No escuchando"
 fi
 
 # Verificar conexiones activas
 TCP_CONNECTIONS=$(netstat -tn 2>/dev/null | grep ":5003 " | wc -l)
 if [ "$TCP_CONNECTIONS" -gt 0 ]; then
-    echo -e "   ${BLUE}📊 Conexiones TCP activas:${NC} $TCP_CONNECTIONS"
+    echo -e "${GREEN}[OK] Conexiones TCP activas:${NC} $TCP_CONNECTIONS"
 else
-    echo -e "   ${YELLOW}📊 Conexiones TCP activas:${NC} 0"
+    echo -e "${YELLOW}Conexiones TCP activas:${NC} 0"
 fi
 
 # Estadísticas del sistema
-echo -e "\n${BLUE}💻 ESTADÍSTICAS DEL SISTEMA:${NC}"
-echo -e "   ${BLUE}🕐 Fecha/Hora:${NC} $(date)"
-echo -e "   ${BLUE}💻 Uptime:${NC} $(uptime | awk -F'up ' '{print $2}' | awk -F', load' '{print $1}')"
-echo -e "   ${BLUE}💾 Memoria libre:${NC} $(free -h | awk 'NR==2{printf "%.1f%%", $7*100/$2}')"
-echo -e "   ${BLUE}💽 Espacio disco:${NC} $(df -h . | awk 'NR==2{print $4 " libre de " $2}')"
+echo -e "\n${CYAN}--- ESTADISTICAS DEL SISTEMA ---${NC}"
+echo -e "${BLUE}Fecha/Hora:${NC} $(date)"
+echo -e "${BLUE}Uptime:${NC} $(uptime | awk -F'up ' '{print $2}' | awk -F', load' '{print $1}')"
+echo -e "${BLUE}Memoria libre:${NC} $(free -h | awk 'NR==2{printf \"%.1f%%\", $7*100/$2}')"
+echo -e "${BLUE}Espacio disco:${NC} $(df -h . | awk 'NR==2{print $4 \" libre de \" $2}')"
 
 # Resumen final
-echo -e "\n${BLUE}📋 RESUMEN:${NC}"
+echo -e "\n${CYAN}--- RESUMEN ---${NC}"
 if [ "$SERVER_RUNNING" = true ] || [ -n "$ALL_PIDS" ]; then
-    echo -e "   ${GREEN}✅ Servidor:${NC} Ejecutándose"
-    echo -e "   ${BLUE}🔄 Para detener:${NC} ./stop_server_rpg.sh"
+    echo -e "${GREEN}[OK] Servidor: Ejecutandose${NC}"
+    echo -e "${BLUE}Para detener:${NC} ./stop_server_rpg.sh"
 else
-    echo -e "   ${RED}❌ Servidor:${NC} No ejecutándose"
-    echo -e "   ${BLUE}🚀 Para iniciar:${NC} ./start_server_rpg.sh"
+    echo -e "${RED}[ERROR] Servidor: No ejecutandose${NC}"
+    echo -e "${BLUE}Para iniciar:${NC} ./start_server_rpg.sh"
 fi
 
-echo -e "   ${BLUE}📊 Para ver logs en tiempo real:${NC} tail -f $LOG_FILE"
-echo -e "   ${BLUE}📊 Para ver posiciones:${NC} tail -f $POSITIONS_FILE"
+if [ -n "$LATEST_LOG" ]; then
+    echo -e "${BLUE}Ver logs en tiempo real:${NC} tail -f $LATEST_LOG"
+fi
 
-echo -e "\n${GREEN}🎯 COMANDOS DISPONIBLES:${NC}"
-echo -e "   ${YELLOW}Iniciar:${NC} ./start_server_rpg.sh"
-echo -e "   ${YELLOW}Detener:${NC} ./stop_server_rpg.sh"
-echo -e "   ${YELLOW}Estado:${NC} ./server_status_rpg.sh"
-echo -e "   ${YELLOW}Logs:${NC} tail -f $LOG_FILE"
+echo -e "\n${CYAN}--- COMANDOS DISPONIBLES ---${NC}"
+echo -e "${YELLOW}Iniciar:${NC} ./start_server_rpg.sh"
+echo -e "${YELLOW}Detener:${NC} ./stop_server_rpg.sh"
+echo -e "${YELLOW}Estado:${NC} ./server_status_rpg.sh"
+if [ -n "$LATEST_LOG" ]; then
+    echo -e "${YELLOW}Logs:${NC} tail -f $LATEST_LOG"
+fi
+
+echo -e "\n${BLUE}=====================================${NC}"

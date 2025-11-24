@@ -55,9 +55,9 @@ def getID(cadena):
     7E	Ending
     """
 
-def get_daily_log_filename(base_name):
+def get_daily_log_filename():
     """
-    Genera el nombre de archivo de log diario con formato logs/BASE_NAME_DDMMYY.txt
+    Genera el nombre de archivo de log diario con formato logs/LOG_DDMMYY.txt
     Crea la carpeta logs/ si no existe
     """
     # Crear carpeta logs/ si no existe
@@ -68,41 +68,43 @@ def get_daily_log_filename(base_name):
     now = datetime.now()
     fecha_str = now.strftime('%d%m%y')  # DDMMYY
     
-    # Construir nombre de archivo
-    filename = f"logs/{base_name}_{fecha_str}.txt"
+    # Construir nombre de archivo único para todo
+    filename = f"logs/LOG_{fecha_str}.txt"
     return filename
 
 def guardarLog(cadena):
-    archivo_path = get_daily_log_filename("LOG")
-    archivo = open(archivo_path, "a")
+    """Guarda un mensaje en el log diario único"""
+    archivo_path = get_daily_log_filename()
+    archivo = open(archivo_path, "a", encoding='utf-8')
     fechaHora = getFechaHora()
     archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()
 
-def guardarLogArchivo(cadena, base_name):
+def guardarLogArchivo(cadena, tag=""):
     """
-    Guarda log en archivo con nombre base especificado
-    El archivo se creará en logs/ con formato BASE_NAME_DDMMYY.txt
+    Guarda log en el archivo diario único con un tag opcional
+    El tag permite identificar el tipo de mensaje
     """
-    archivo_path = get_daily_log_filename(base_name)
-    archivo = open(archivo_path, "a")
+    archivo_path = get_daily_log_filename()
+    archivo = open(archivo_path, "a", encoding='utf-8')
     fechaHora = getFechaHora()
-    archivo.write(fechaHora + ": " + cadena + "\n")
+    if tag:
+        archivo.write(fechaHora + f" [{tag}]: " + cadena + "\n")
+    else:
+        archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()	
 	
 def guardarLogPersonal(cadena):
-    archivo_path = get_daily_log_filename("LOG_PERSONAL")
-    archivo = open(archivo_path, "a")
-    fechaHora = getFechaHora()
-    archivo.write(fechaHora + ": " + cadena + "\n")
-    archivo.close()
+    """Guarda log personal en el archivo diario único con tag [PERSONAL]"""
+    guardarLogArchivo(cadena, "PERSONAL")
 
 def guardarLogUDP(cadena):
-    archivo_path = get_daily_log_filename("LOG_UDP")
-    archivo = open(archivo_path, "a")
-    fechaHora = getFechaHora()
-    archivo.write(fechaHora + ": " + cadena + "\n")
-    archivo.close()
+    """Guarda log UDP en el archivo diario único con tag [UDP]"""
+    guardarLogArchivo(cadena, "UDP")
+
+def guardarLogNMEA(cadena):
+    """Guarda log NMEA en el archivo diario único con tag [NMEA]"""
+    guardarLogArchivo(cadena, "NMEA")
 
 def getFechaHora():
     # Obtener componentes individuales de la fecha y hora

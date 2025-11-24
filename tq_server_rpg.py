@@ -46,35 +46,10 @@ class TQServerRPG:
         # Configurar logging
         self.setup_logging()
         
-        # Configurar archivos - se actualizan diariamente
-        self.update_log_files()
-        self.setup_positions_file()
-        self.setup_rpg_log_file()
+        # No necesitamos archivos separados, todo va al log diario único
 
-    def get_daily_log_filename(self, base_name, extension='log'):
-        """
-        Genera el nombre de archivo de log diario con formato logs/BASE_NAME_DDMMYY.ext
-        Crea la carpeta logs/ si no existe
-        """
-        # Crear carpeta logs/ si no existe
-        if not os.path.exists('logs'):
-            os.makedirs('logs')
-        
-        # Obtener fecha actual en formato DDMMYY
-        now = datetime.now()
-        fecha_str = now.strftime('%d%m%y')  # DDMMYY
-        
-        # Construir nombre de archivo
-        filename = f"logs/{base_name}_{fecha_str}.{extension}"
-        return filename
-    
-    def update_log_files(self):
-        """Actualiza los nombres de archivos de log para el día actual"""
-        self.positions_file = self.get_daily_log_filename('LOG_POSITIONS', 'csv')
-        self.rpg_log_file = self.get_daily_log_filename('LOG_RPG', 'log')
-    
     def setup_logging(self):
-        """Configura el sistema de logging"""
+        """Configura el sistema de logging para usar el archivo diario único"""
         self.logger = logging.getLogger('TQServerRPG')
         self.logger.setLevel(logging.INFO)
         
@@ -83,8 +58,8 @@ class TQServerRPG:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # Usar log diario para el archivo del servidor
-        log_file = self.get_daily_log_filename('LOG_SERVER', 'log')
+        # Usar el mismo archivo de log diario que funciones.py
+        log_file = funciones.get_daily_log_filename()
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
@@ -95,35 +70,8 @@ class TQServerRPG:
         
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
-        
-    def setup_positions_file(self):
-        """Configura el archivo de registro de posiciones"""
-        try:
-            file_exists = os.path.exists(self.positions_file)
-            with open(self.positions_file, 'a', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                if not file_exists:
-                    writer.writerow(['ID', 'LATITUD', 'LONGITUD', 'RUMBO', 'VELOCIDAD_KMH', 'VELOCIDAD_NUDOS', 'FECHAGPS', 'HORAGPS', 'FECHARECIBIDO'])
-                    self.logger.info(f"Archivo de posiciones creado: {self.positions_file}")
-                else:
-                    self.logger.info(f"Archivo de posiciones existente: {self.positions_file}")
-        except Exception as e:
-            self.logger.error(f"Error configurando archivo de posiciones: {e}")
-            
-    def setup_rpg_log_file(self):
-        """Configura el archivo de registro de mensajes RPG"""
-        try:
-            file_exists = os.path.exists(self.rpg_log_file)
-            if not file_exists:
-                with open(self.rpg_log_file, 'w', encoding='utf-8') as f:
-                    f.write(f"# Log de mensajes RPG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write("# Formato: TIMESTAMP | MENSAJE_ORIGINAL | MENSAJE_RPG | ESTADO_ENVIO\n")
-                    f.write("-" * 80 + "\n")
-                self.logger.info(f"Archivo de log RPG creado: {self.rpg_log_file}")
-            else:
-                self.logger.info(f"Archivo de log RPG existente: {self.rpg_log_file}")
-        except Exception as e:
-            self.logger.error(f"Error configurando archivo de log RPG: {e}")
+    # Eliminadas funciones setup_positions_file() y setup_rpg_log_file()
+    # Ya no son necesarias, todo va al log diario único
 
     def calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """
