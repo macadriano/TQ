@@ -155,6 +155,13 @@ Ver [README_LOGS.md](README_LOGS.md) para más detalles.
 - **Protocolo**: UDP
 - **Función**: Reenvía mensajes RPG al servidor destino
 
+### Puerto TCP (Salida - Reenvío)
+- **Host**: 200.58.98.187
+- **Puerto**: 5003
+- **Protocolo**: TCP
+- **Función**: Reenvía datos crudos (raw bytes) tal cual se reciben
+
+
 ### Modificar Configuración
 
 Editar en `tq_server_rpg.py`:
@@ -164,8 +171,12 @@ server = TQServerRPG(
     host='0.0.0.0',              # IP local (0.0.0.0 = todas las interfaces)
     port=5003,                    # Puerto TCP de entrada
     udp_host='179.43.115.190',   # IP del servidor UDP destino
-    udp_port=7007                 # Puerto UDP destino
+    udp_port=7007,                # Puerto UDP destino
+    tcp_forward_host='200.58.98.187', # IP destino reenvío TCP
+    tcp_forward_port=5003,        # Puerto destino reenvío TCP
+    tcp_forward_enabled=True      # Habilitar/Deshabilitar reenvío TCP
 )
+
 ```
 
 ## 🔍 Protocolos Soportados

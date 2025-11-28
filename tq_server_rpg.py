@@ -14,8 +14,10 @@ import os
 import math
 import requests
 import time
+import json
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Importar las funciones y protocolos existentes
 import funciones
@@ -23,16 +25,28 @@ import protocolo
 
 class TQServerRPG:
     def __init__(self, host: str = '0.0.0.0', port: int = 5003, 
-                 udp_host: str = '179.43.115.190', udp_port: int = 7007):
+                 udp_host: str = '179.43.115.190', udp_port: int = 7007,
+                 health_port: int = 5004,
+                 tcp_forward_host: str = '200.58.98.187', tcp_forward_port: int = 5003,
+                 tcp_forward_enabled: bool = True):
         self.host = host
         self.port = port
         self.udp_host = udp_host
         self.udp_port = udp_port
+        self.health_port = health_port
+        
+        # Configuración de reenvío TCP
+        self.tcp_forward_host = tcp_forward_host
+        self.tcp_forward_port = tcp_forward_port
+        self.tcp_forward_enabled = tcp_forward_enabled
+
         self.server_socket = None
+        self.health_server = None
         self.clients: Dict[str, socket.socket] = {}
         self.running = False
         self.message_count = 0
         self.terminal_id = ""
+        self.start_time = None
         
         # Variables para filtros de posición
         self.last_valid_position: Optional[Dict] = None
@@ -341,9 +355,33 @@ class TQServerRPG:
         except Exception as e:
             self.logger.error(f"Error loggeando mensaje RPG: {e}")
 
+    def send_tcp_raw_data(self, data: bytes):
+        """
+        Reenvía los datos crudos por TCP a la IP y puerto configurados
+        """
+        if not self.tcp_forward_enabled:
+            return
+
+        try:
+            # Crear socket TCP
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                # Timeout corto para no bloquear la operación principal
+                sock.settimeout(2.0)
+                sock.connect((self.tcp_forward_host, self.tcp_forward_port))
+                sock.sendall(data)
+                self.logger.info(f"Datos reenviados por TCP a {self.tcp_forward_host}:{self.tcp_forward_port}")
+                # print(f"📤 Datos reenviados TCP a {self.tcp_forward_host}:{self.tcp_forward_port}")
+        except Exception as e:
+            self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host}:{self.tcp_forward_port}: {e}")
+
+
     def process_message_with_rpg(self, data: bytes, client_id: str):
         """Procesa un mensaje recibido del cliente"""
         self.message_count += 1
+        
+        # Reenvío TCP de datos crudos (si está habilitado)
+        # Se hace al principio para asegurar que se reenvía tal cual llega
+        self.send_tcp_raw_data(data)
         
         # Log del mensaje raw
         hex_data = funciones.bytes2hexa(data)
@@ -746,20 +784,107 @@ class TQServerRPG:
     def get_status(self) -> Dict:
         """Retorna el estado actual del servidor"""
         geocoding_stats = self.get_geocoding_stats()
+        uptime_seconds = 0
+        if self.start_time:
+            uptime_seconds = int((datetime.now() - self.start_time).total_seconds())
+        
         return {
             'running': self.running,
             'host': self.host,
             'port': self.port,
             'udp_host': self.udp_host,
             'udp_port': self.udp_port,
+            'tcp_forward_enabled': self.tcp_forward_enabled,
+            'tcp_forward_host': self.tcp_forward_host,
+            'tcp_forward_port': self.tcp_forward_port,
             'terminal_id': self.terminal_id,
             'connected_clients': len(self.clients),
             'total_messages': self.message_count,
             'filtered_positions': self.filtered_positions_count,
             'geocoding_enabled': geocoding_stats['enabled'],
             'geocoding_cache_size': geocoding_stats['cache_size'],
-            'clients': list(self.clients.keys())
+            'clients': list(self.clients.keys()),
+            'uptime_seconds': uptime_seconds
         }
+    
+    def create_health_handler(self):
+        """Crea el handler para el servidor HTTP de health check"""
+        server_instance = self
+        
+        class HealthCheckHandler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                """Silenciar logs HTTP para no contaminar el log principal"""
+                pass
+            
+            def do_GET(self):
+                """Maneja peticiones GET al endpoint /health"""
+                if self.path == '/health':
+                    try:
+                        # Obtener estado del servidor
+                        status_data = server_instance.get_status()
+                        
+                        # Preparar respuesta JSON
+                        response = {
+                            'status': 'ok' if server_instance.running else 'stopped',
+                            'timestamp': datetime.now().isoformat(),
+                            'uptime_seconds': status_data['uptime_seconds'],
+                            'clients': status_data['connected_clients'],
+                            'messages': status_data['total_messages'],
+                            'terminal_id': status_data['terminal_id']
+                        }
+                        
+                        # Enviar respuesta
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(response).encode('utf-8'))
+                        
+                    except Exception as e:
+                        # Error interno
+                        self.send_response(500)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        error_response = {
+                            'status': 'error',
+                            'message': str(e)
+                        }
+                        self.wfile.write(json.dumps(error_response).encode('utf-8'))
+                else:
+                    # Endpoint no encontrado
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'status': 'not_found'}).encode('utf-8'))
+        
+        return HealthCheckHandler
+    
+    def start_health_server(self):
+        """Inicia el servidor HTTP de health check en un thread separado"""
+        try:
+            handler_class = self.create_health_handler()
+            self.health_server = HTTPServer(('0.0.0.0', self.health_port), handler_class)
+            
+            def run_health_server():
+                self.logger.info(f"Health check server iniciado en puerto {self.health_port}")
+                print(f"💚 Health check endpoint: http://localhost:{self.health_port}/health")
+                self.health_server.serve_forever()
+            
+            health_thread = threading.Thread(target=run_health_server)
+            health_thread.daemon = True
+            health_thread.start()
+            
+        except Exception as e:
+            self.logger.error(f"Error iniciando health check server: {e}")
+            print(f"⚠️  No se pudo iniciar health check server: {e}")
+    
+    def stop_health_server(self):
+        """Detiene el servidor HTTP de health check"""
+        if self.health_server:
+            try:
+                self.health_server.shutdown()
+                self.logger.info("Health check server detenido")
+            except Exception as e:
+                self.logger.error(f"Error deteniendo health check server: {e}")
         
     def start(self):
         """Inicia el servidor TCP"""
@@ -770,6 +895,11 @@ class TQServerRPG:
             self.server_socket.listen(5)
             
             self.running = True
+            self.start_time = datetime.now()
+            
+            # Iniciar servidor de health check
+            self.start_health_server()
+            
             self.logger.info(f"Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"🚀 Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"📡 UDP configurado para reenvío a {self.udp_host}:{self.udp_port}")
@@ -796,6 +926,10 @@ class TQServerRPG:
     def stop(self):
         """Detiene el servidor"""
         self.running = False
+        
+        # Detener health server
+        self.stop_health_server()
+        
         if self.server_socket:
             self.server_socket.close()
         self.logger.info("Servidor detenido")
