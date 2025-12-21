@@ -36,8 +36,10 @@ UDP_LISTEN_PORT = 9001
 UDP_LISTEN_HOST = '0.0.0.0'
 
 # Tiempo en segundos sin recibir heartbeat antes de considerar el servidor caído
-# Default: 5 minutos (300 segundos)
-HEARTBEAT_TIMEOUT_SECONDS = 300
+# IMPORTANTE: Debe ser mayor que heartbeat_interval_seconds del servidor para evitar falsos positivos
+# Recomendado: 1.5x a 2x el intervalo (si el servidor envía cada 300s, usar 450-600s)
+# Default: 600 segundos (10 minutos) para servidor que envía cada 300s (5 minutos)
+HEARTBEAT_TIMEOUT_SECONDS = 600
 
 # Intervalo esperado de heartbeats (para logging y estadísticas)
 EXPECTED_HEARTBEAT_INTERVAL_SECONDS = 300  # 5 minutos

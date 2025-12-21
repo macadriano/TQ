@@ -151,16 +151,23 @@ class HeartbeatMonitor:
     
     def process_heartbeat(self, data: dict):
         """Procesa un heartbeat recibido"""
-        self.last_heartbeat_time = datetime.now()
-        self.last_heartbeat_data = data
-        self.heartbeat_count += 1
+        current_time = datetime.now()
         
         # Si había una alerta previa y ahora recibimos heartbeat, es recuperación
         was_down = self.alert_sent
-        self.alert_sent = False
         
+        # Actualizar tiempo del último heartbeat ANTES de verificar recuperación
+        self.last_heartbeat_time = current_time
+        self.last_heartbeat_data = data
+        self.heartbeat_count += 1
+        
+        # Resetear flag de alerta solo después de actualizar last_heartbeat_time
         if was_down:
+            self.alert_sent = False
             self.send_recovery_notification()
+        else:
+            # Si no estaba caído, asegurar que el flag esté reseteado
+            self.alert_sent = False
         
         uptime = data.get('uptime_seconds', 0)
         server_id = data.get('server_id', 'tq_server_rpg')
@@ -206,15 +213,20 @@ class HeartbeatMonitor:
         
         elapsed = (datetime.now() - self.last_heartbeat_time).total_seconds()
         
+        # IMPORTANTE: Solo alertar si realmente ha pasado el timeout completo
+        # y si no se ha enviado una alerta recientemente (respetar cooldown)
         if elapsed > self.timeout_seconds:
+            # Solo alertar si no se ha enviado alerta recientemente (cooldown)
             if not self.alert_sent or self.can_send_alert_again():
+                self.logger.warning(f"Timeout detectado: {elapsed:.1f}s > {self.timeout_seconds}s")
                 self.send_down_alert(f"Sin heartbeat por {elapsed:.0f} segundos")
                 self.alert_sent = True
                 self.last_alert_time = datetime.now()
         else:
-            # Todo bien, resetear flag de alerta si estaba activo
-            if self.alert_sent:
-                self.alert_sent = False
+            # Todo bien - estamos dentro del timeout, no alertar
+            # Si había una alerta previa, solo resetear el flag cuando recibamos un heartbeat
+            # NO resetear aquí porque podría causar problemas si el servidor está cerca del límite
+            pass
     
     def can_send_alert_again(self) -> bool:
         """Verifica si puede enviar una nueva alerta (evitar spam)"""
