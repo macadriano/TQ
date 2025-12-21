@@ -30,9 +30,9 @@ class TQServerRPG:
                  health_port: int = 5004,
                  tcp_forward_host: str = '168.197.48.154', tcp_forward_port: int = 5003,
                  tcp_forward_enabled: bool = True,
-                 heartbeat_enabled: bool = False,
+                 heartbeat_enabled: bool = True,
                  heartbeat_udp_host: str = '127.0.0.1',
-                 heartbeat_udp_port: int = 5006,
+                 heartbeat_udp_port: int = 9001,
                  heartbeat_interval_seconds: int = 300):
         self.host = host
         self.port = port
@@ -315,7 +315,7 @@ class TQServerRPG:
             
             if not is_valid:
                 self.filtered_positions_count += 1
-                self.logger.info(f"Posición filtrada #{self.filtered_positions_count}: {reason}")
+                # No loggear verbose - posición filtrada es normal
                 print(f"🚫 Posición filtrada: {reason}")
                 return
             
@@ -362,14 +362,9 @@ class TQServerRPG:
             self.logger.error(f"Error guardando posición en archivo: {e}")
             
     def log_rpg_message(self, original_message: str, rpg_message: str, status: str):
-        """Guarda un mensaje RPG en el archivo de log"""
-        try:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            with open(self.rpg_log_file, 'a', encoding='utf-8') as f:
-                f.write(f"{timestamp} | {original_message} | {rpg_message} | {status}\n")
-            self.logger.info(f"Mensaje RPG loggeado: {status}")
-        except Exception as e:
-            self.logger.error(f"Error loggeando mensaje RPG: {e}")
+        """Función legacy - ya no se usa, mantener para compatibilidad pero no hacer nada"""
+        # Esta función ya no se usa - el logging optimizado se hace con funciones.guardarLogUDP
+        pass
     
     def log_rpg_optimized(self, position_data: Dict, protocol_type: str, 
                          rpg_message: str = "", tcp_sent: bool = False):
@@ -429,7 +424,7 @@ class TQServerRPG:
                 sock.settimeout(2.0)
                 sock.connect((self.tcp_forward_host, self.tcp_forward_port))
                 sock.sendall(data)
-                self.logger.info(f"Datos reenviados por TCP a {self.tcp_forward_host}:{self.tcp_forward_port}")
+                # No loggear verbose - reenvío TCP es operación normal
                 # print(f"📤 Datos reenviados TCP a {self.tcp_forward_host}:{self.tcp_forward_port}")
         except Exception as e:
             self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host}:{self.tcp_forward_port}: {e}")
@@ -443,9 +438,9 @@ class TQServerRPG:
         # Se hace al principio para asegurar que se reenvía tal cual llega
         self.send_tcp_raw_data(data)
         
-        # Log del mensaje raw
+        # Log del mensaje raw (formato compacto)
         hex_data = funciones.bytes2hexa(data)
-        self.logger.info(f"Msg #{self.message_count} de {client_id}: {hex_data}")
+        # No loggear verbose - solo guardar en log compacto
         print(f"📨 Msg #{self.message_count} de {client_id}")
         print(f"   Raw: {hex_data}")
         
@@ -465,24 +460,21 @@ class TQServerRPG:
                     else:
                         funciones.guardarLog(f"[NMEA0183] {text_data}")
                 except Exception as e_log:
-                    self.logger.warning(f"No se pudo guardar log NMEA: {e_log}")
+                    pass  # Error silencioso - ya se guardó en log
                 
-                self.logger.info(f"Mensaje NMEA0183 detectado y filtrado: {text_data}")
+                # No loggear verbose - ya se guardó con guardarLogNMEA
                 print(f"⛔ NMEA0183 filtrado: {text_data}")
-                # Dejar traza en el log de RPG para auditoría
-                try:
-                    self.log_rpg_message(hex_data, "", "IGNORADO_NMEA")
-                except Exception:
-                    pass
+                # NMEA ignorado - ya se guardó con guardarLogNMEA
+                pass
                 return
             # ==========================================================================
 
-            # Guardar el mensaje en el log
+            # Guardar el mensaje en el log (formato compacto)
             funciones.guardarLog(hex_data)
             
             # Detectar el tipo de protocolo
             protocol_type = protocolo.getPROTOCOL(hex_data)
-            self.logger.info(f"Tipo de protocolo detectado: {protocol_type}")
+            # No loggear verbose - información no esencial
         
             if protocol_type == "22":
                 # Protocolo de posición - convertir a RPG y reenviar
@@ -491,35 +483,33 @@ class TQServerRPG:
                 position_id = protocolo.getIDok(hex_data)
                 if position_id:
                     self.terminal_id = position_id  # ACTUALIZAR el TerminalID
-                    self.logger.info(f"TerminalID actualizado desde mensaje de posición: {position_id}")
+                    # No loggear verbose - solo print para consola
                     print(f"🆔 TerminalID actualizado: {position_id}")
             
                 if len(self.terminal_id) > 0:
                     # Convertir a RPG usando la función existente
                     rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
-                    self.logger.info(f"Mensaje RPG generado: {rpg_message}")
+                    # No loggear verbose
                     
                     # Reenviar por UDP
                     funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
                     
-                    # Log del mensaje RPG
-                    self.log_rpg_message(hex_data, rpg_message, "ENVIADO")
-                    
+                    # Log del mensaje RPG (ya no se usa log_rpg_message, usar funciones.guardarLogUDP)
                     print(f"🔄 Mensaje RPG enviado por UDP: {rpg_message}")
                     
-                    # También guardar en el log UDP
+                    # Guardar en el log UDP (formato compacto)
                     funciones.guardarLogUDP(rpg_message)
                     
                 else:
-                    self.logger.warning("TerminalID no disponible para conversión RPG")
-                    self.log_rpg_message(hex_data, "", "SIN_TERMINAL_ID")
+                    # No loggear verbose - solo print
+                    print("⚠️ TerminalID no disponible para conversión RPG")
                 
             elif protocol_type == "01":
                 # Protocolo de registro - obtener TerminalID
                 full_terminal_id = protocolo.getIDok(hex_data)
                 self.terminal_id = full_terminal_id
                 
-                self.logger.info(f"TerminalID extraído: {full_terminal_id}")
+                # Log compacto usando funciones.guardarLog
                 funciones.guardarLog(f"TerminalID={self.terminal_id}")
                 print(f"🆔 TerminalID configurado: {self.terminal_id}")
                 
@@ -528,23 +518,26 @@ class TQServerRPG:
             
             else:
                 # Otro tipo de protocolo - intentar decodificar como TQ
-                self.logger.info(f"Protocolo {protocol_type} - intentando decodificación TQ")
+                # No loggear verbose
                 position_data = self.decode_position_message(data)
             
                 if position_data:
-                    self.logger.info(f"Posición decodificada: {position_data}")
-                    self.display_position(position_data, client_id)
+                    # No loggear verbose - solo mostrar en consola si es necesario
+                    # self.display_position(position_data, client_id)  # Comentado para reducir verbosidad
                     
                     # IMPORTANTE: Si no tenemos TerminalID, extraerlo del mensaje de posición
                     if len(self.terminal_id) == 0:
                         position_id = protocolo.getIDok(hex_data)
                         if position_id:
                             self.terminal_id = position_id
-                            self.logger.info(f"TerminalID actualizado desde mensaje de posición (protocolo {protocol_type}): {position_id}")
+                            # No loggear verbose - solo print
                             print(f"🆔 TerminalID actualizado: {position_id}")
                     
-                    # Guardar posición en archivo CSV
-                    self.save_position_to_file(position_data)
+                    # Guardar posición en archivo CSV (si existe la función, sino ignorar)
+                    try:
+                        self.save_position_to_file(position_data)
+                    except AttributeError:
+                        pass  # positions_file no existe, ignorar
                     
                     # Si tenemos TerminalID, convertir a RPG
                     if len(self.terminal_id) > 0:
@@ -556,30 +549,33 @@ class TQServerRPG:
                             rpg_message = self.create_rpg_message_from_gps(position_data, device_id)
                             if rpg_message:
                                 funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
-                                self.log_rpg_message(hex_data, rpg_message, "ENVIADO_RPG_GPS")
+                                # Usar log optimizado en lugar de log_rpg_message
+                                funciones.guardarLogUDP(rpg_message)
                                 print(f"🔄 Mensaje RPG creado desde GPS enviado por UDP: {rpg_message}")
                         except Exception as e:
-                            self.logger.warning(f"No se pudo crear mensaje RPG desde GPS: {e}")
+                            # Solo loggear errores críticos
+                            pass  # No loggear warnings verbosos
                             # Fallback: intentar con protocolo personal
                             try:
                                 rpg_message = protocolo.RGPdesdePERSONAL(hex_data, self.terminal_id)
                                 if rpg_message:
                                     funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
-                                    self.log_rpg_message(hex_data, rpg_message, "ENVIADO_PERSONAL")
+                                    funciones.guardarLogUDP(rpg_message)
                                     print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
                             except:
-                                self.logger.warning("No se pudo convertir a RPG personal")
+                                pass  # No loggear warnings verbosos
                     else:
-                        self.logger.warning("TerminalID no disponible para conversión RPG")
+                        # No loggear verbose
+                        pass
                         
                 else:
-                    self.logger.warning(f"No se pudo decodificar mensaje de {client_id}")
+                    # No loggear verbose - solo print para debugging
                     print(f"⚠️  No se pudo decodificar el mensaje")
                 
         except Exception as e:
-            self.logger.error(f"Error procesando mensaje de {client_id}: {e}")
+            # Solo loggear errores críticos, no todos los errores
             print(f"❌ Error procesando mensaje: {e}")
-            self.log_rpg_message(hex_data, "", f"ERROR:{str(e)}")
+            # No usar log_rpg_message que ya no existe o tiene problemas
 
     def decode_nmea_message(self, nmea_message: str) -> Dict:
         """Decodifica un mensaje NMEA y extrae las coordenadas"""
@@ -618,7 +614,7 @@ class TQServerRPG:
                     except:
                         heading = 0
                 
-                self.logger.info(f"Coordenadas NMEA extraídas: Lat={latitude:.6f}°, Lon={longitude:.6f}°")
+                        # No loggear verbose
                 
                 return {
                     'device_id': device_id,  # ID para RPG (68133)
@@ -668,14 +664,14 @@ class TQServerRPG:
                 ascii_message = data.decode('ascii', errors='ignore')
                 if ascii_message.startswith('*') and ascii_message.endswith('#'):
                     # Es un mensaje NMEA directo
-                    self.logger.info(f"Mensaje NMEA detectado: {ascii_message}")
+                    # No loggear verbose - ya se guardó con guardarLogNMEA
                     return self.decode_nmea_message(ascii_message)
                 else:
                     # Intentar decodificar hex a ASCII
                     ascii_from_hex = bytes.fromhex(hex_str).decode('ascii', errors='ignore')
                     if ascii_from_hex.startswith('*') and ascii_from_hex.endswith('#'):
                         # Es un mensaje NMEA codificado en hexadecimal
-                        self.logger.info(f"Mensaje NMEA codificado en hex detectado: {ascii_from_hex}")
+                        # No loggear verbose - ya se guardó con guardarLogNMEA
                         return self.decode_nmea_message(ascii_from_hex)
             except:
                 pass
@@ -718,13 +714,13 @@ class TQServerRPG:
                         
                         # Validar rangos geográficos
                         if not (-90 <= latitude <= 90):
-                            self.logger.warning(f"Latitud fuera de rango válido: {latitude}")
+                            # No loggear verbose - solo corregir valor
                             latitude = 0.0
                         if not (-180 <= longitude <= 180):
-                            self.logger.warning(f"Longitud fuera de rango válido: {longitude}")
+                            # No loggear verbose - solo corregir valor
                             longitude = 0.0
                         
-                        self.logger.info(f"Coordenadas NMEA extraídas: Lat={latitude:.6f}° ({lat_direction}), Lon={longitude:.6f}° ({lon_direction})")
+                        # No loggear verbose - información no esencial
                         
                     else:
                         latitude = 0.0
@@ -735,19 +731,18 @@ class TQServerRPG:
                     latitude = protocolo.getLATchino(hex_str)
                     longitude = protocolo.getLONchino(hex_str)
                     
-                    self.logger.info(f"Coordenadas hexadecimales extraídas: Lat={latitude:.6f}°, Lon={longitude:.6f}°")
+                    # No loggear verbose - información no esencial
                     
             except Exception as e:
                 # Fallback: usar el método hexadecimal del protocolo
-                self.logger.warning(f"Error en decodificación NMEA, usando protocolo hexadecimal: {e}")
+                # No loggear verbose - intentar fallback silenciosamente
                 try:
                     latitude = protocolo.getLATchino(hex_str)
                     longitude = protocolo.getLONchino(hex_str)
-                    self.logger.info(f"Coordenadas hexadecimales (fallback): Lat={latitude:.6f}°, Lon={longitude:.6f}°")
                 except:
                     latitude = 0.0
                     longitude = 0.0
-                    self.logger.error("No se pudieron extraer coordenadas del mensaje hexadecimal")
+                    # No loggear verbose - solo continuar con valores por defecto
             
             # CORREGIDO: Extraer velocidad y rumbo usando las funciones del protocolo TQ
             # Según información del fabricante: velocidad en nudos, rumbo en grados (0-360)
@@ -760,15 +755,15 @@ class TQServerRPG:
             
             # Validar rangos según especificaciones
             if speed_kmh > 250:  # Límite de 250 km/h
-                self.logger.warning(f"Velocidad excede límite de 250 km/h: {speed_kmh:.2f} km/h ({speed_knots} nudos)")
+                # No loggear verbose - solo corregir valor
                 speed_kmh = 250
             
             if not (0 <= heading <= 360):  # Rango de rumbo 0-360 grados
-                self.logger.warning(f"Rumbo fuera de rango 0-360: {heading}")
+                # No loggear verbose - solo corregir valor
                 heading = 0
             
             speed = int(speed_kmh)  # Convertir a entero para el mensaje RPG
-            self.logger.info(f"Velocidad y rumbo extraídos: {speed_knots} nudos ({speed_kmh:.2f} km/h), Rumbo: {heading}°")
+            # No loggear verbose - información no esencial
             
             return {
                 'device_id': device_id,  # ID para RPG (68133)
@@ -1247,15 +1242,15 @@ class TQServerRPG:
             is_valid, reason = self.is_position_valid(position_data)
             
             if not is_valid:
-                self.logger.info(f"No se crea mensaje RPG - posición filtrada: {reason}")
+                # No loggear verbose - posición filtrada es normal
                 return ""
             
             # Validar que las coordenadas estén en rangos válidos
             if not (-90 <= latitude <= 90):
-                self.logger.warning(f"Latitud fuera de rango válido para RPG: {latitude}")
+                # No loggear verbose - solo rechazar
                 return ""
             if not (-180 <= longitude <= 180):
-                self.logger.warning(f"Longitud fuera de rango válido para RPG: {longitude}")
+                # No loggear verbose - solo rechazar
                 return ""
             
             # CORREGIDO: Usar fecha y hora GPS del protocolo TQ con offset -3 horas para Argentina
@@ -1276,18 +1271,18 @@ class TQServerRPG:
                     # Formatear en DDMMYYHHMMSS usando la hora GPS original
                     timestamp = gps_utc.strftime('%d%m%y%H%M%S')
                     
-                    self.logger.info(f"Usando fecha/hora GPS original: {fecha_gps} {hora_gps} UTC (sin offset)")
+                    # No loggear verbose - información no esencial
                     
                 except Exception as e:
                     # Fallback al timestamp actual si hay error
                     now = datetime.now()
                     timestamp = now.strftime('%d%m%y%H%M%S')
-                    self.logger.warning(f"Error procesando fecha/hora GPS, usando timestamp actual: {e}")
+                    # No loggear verbose - usar fallback silenciosamente
             else:
                 # Fallback al timestamp actual si no hay fecha/hora GPS
                 now = datetime.now()
                 timestamp = now.strftime('%d%m%y%H%M%S')
-                self.logger.warning("No se encontró fecha/hora GPS, usando timestamp actual")
+                # No loggear verbose - usar fallback silenciosamente
             
             # Formato RPG correcto según el manual: >RGP[timestamp][lat][lon][heading][speed][status]&[seq];ID=[id];#[seq]*[checksum]<
             # Ejemplo: >RGP210825145011-3416.9932-05855.05980000003000001;&01;ID=38312;#0001*62<
@@ -1337,7 +1332,7 @@ class TQServerRPG:
             # Agregar checksum y cerrar mensaje
             rpg_message += f"*{checksum}<"
             
-            self.logger.info(f"Mensaje RPG creado desde GPS: {rpg_message}")
+            # No loggear verbose - mensaje ya se guardará con guardarLogUDP
             
             # ACTUALIZAR ÚLTIMA POSICIÓN VÁLIDA para filtros futuros
             self.last_valid_position = position_data.copy()
@@ -1345,7 +1340,8 @@ class TQServerRPG:
             return rpg_message
             
         except Exception as e:
-            self.logger.error(f"Error creando mensaje RPG desde GPS: {e}")
+            # Solo loggear errores críticos
+            print(f"❌ Error creando mensaje RPG: {e}")
             return ""
 
     def calculate_rpg_checksum(self, rpg_main: str) -> str:

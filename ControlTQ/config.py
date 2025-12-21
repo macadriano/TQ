@@ -46,7 +46,7 @@ EXPECTED_HEARTBEAT_INTERVAL_SECONDS = 300  # 5 minutos
 # Configuración de Telegram
 # ---------------------------------------------------------------------------
 if not _USE_EXTERNAL_CONFIG:
-    TELEGRAM_BOT_TOKEN = "8477575451:AAHPSfQFJMNZtK0OiQHGEJH3ukkVP9P1ilE"
+    TELEGRAM_BOT_TOKEN = "8593437029:AAG_RRiP4zqcQ-IsEBKi38DWECR5KHHjqtA"
     TELEGRAM_CHAT_ID = "5266332517"
 
 # ---------------------------------------------------------------------------
