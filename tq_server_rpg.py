@@ -22,13 +22,18 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # Importar las funciones y protocolos existentes
 import funciones
 import protocolo
+from log_optimizer import get_rpg_logger
 
 class TQServerRPG:
     def __init__(self, host: str = '0.0.0.0', port: int = 5003, 
                  udp_host: str = '179.43.115.190', udp_port: int = 7007,
                  health_port: int = 5004,
-                 tcp_forward_host: str = '200.58.98.187', tcp_forward_port: int = 5003,
-                 tcp_forward_enabled: bool = True):
+                 tcp_forward_host: str = '168.197.48.154', tcp_forward_port: int = 5003,
+                 tcp_forward_enabled: bool = True,
+                 heartbeat_enabled: bool = False,
+                 heartbeat_udp_host: str = '127.0.0.1',
+                 heartbeat_udp_port: int = 5006,
+                 heartbeat_interval_seconds: int = 300):
         self.host = host
         self.port = port
         self.udp_host = udp_host
@@ -39,6 +44,14 @@ class TQServerRPG:
         self.tcp_forward_host = tcp_forward_host
         self.tcp_forward_port = tcp_forward_port
         self.tcp_forward_enabled = tcp_forward_enabled
+        
+        # Configuración de heartbeat UDP
+        self.heartbeat_enabled = heartbeat_enabled
+        self.heartbeat_udp_host = heartbeat_udp_host
+        self.heartbeat_udp_port = heartbeat_udp_port
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.heartbeat_thread = None
+        self.heartbeat_stop_event = None
 
         self.server_socket = None
         self.health_server = None
@@ -56,6 +69,9 @@ class TQServerRPG:
         self.geocoding_enabled = True  # Variable para habilitar/deshabilitar geocodificación
         self.geocoding_cache = {}  # Cache para evitar consultas repetidas
         self.last_geocoding_request = 0  # Control de rate limiting
+        
+        # Inicializar logger RPG optimizado
+        self.rpg_logger = get_rpg_logger()
         
         # Configurar logging
         self.setup_logging()
@@ -354,6 +370,50 @@ class TQServerRPG:
             self.logger.info(f"Mensaje RPG loggeado: {status}")
         except Exception as e:
             self.logger.error(f"Error loggeando mensaje RPG: {e}")
+    
+    def log_rpg_optimized(self, position_data: Dict, protocol_type: str, 
+                         rpg_message: str = "", tcp_sent: bool = False):
+        """
+        Registra intento de paquete RPG en formato optimizado
+        Reduce espacio en disco eliminando información redundante
+        """
+        try:
+            device_id = position_data.get('device_id', '')
+            latitude = position_data.get('latitude', 0.0)
+            longitude = position_data.get('longitude', 0.0)
+            heading = position_data.get('heading', 0)
+            speed = position_data.get('speed', 0)
+            fecha_gps = position_data.get('fecha_gps', '')
+            hora_gps = position_data.get('hora_gps', '')
+            
+            # Preparar lista de destinos
+            destinations = []
+            
+            # Destino UDP si hay mensaje RPG
+            if rpg_message:
+                destinations.append(("UDP", self.udp_host, self.udp_port, rpg_message))
+            
+            # Destino TCP si está habilitado
+            if tcp_sent and self.tcp_forward_enabled:
+                hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
+                destinations.append(("TCP", self.tcp_forward_host, self.tcp_forward_port, hex_data))
+            
+            # Usar el logger optimizado
+            self.rpg_logger.log_rpg_attempt(
+                device_id=device_id,
+                protocol_type=protocol_type,
+                latitude=latitude,
+                longitude=longitude,
+                heading=heading,
+                speed=speed,
+                fecha_gps=fecha_gps,
+                hora_gps=hora_gps,
+                destinations=destinations
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error en log RPG optimizado: {e}")
+
 
     def send_tcp_raw_data(self, data: bytes):
         """
@@ -885,6 +945,85 @@ class TQServerRPG:
                 self.logger.info("Health check server detenido")
             except Exception as e:
                 self.logger.error(f"Error deteniendo health check server: {e}")
+    
+    def send_heartbeat(self):
+        """Envía un heartbeat UDP al monitor"""
+        if not self.heartbeat_enabled:
+            return
+        
+        try:
+            uptime = 0
+            if self.start_time:
+                uptime = int((datetime.now() - self.start_time).total_seconds())
+            
+            heartbeat_data = {
+                'timestamp': datetime.now().isoformat(),
+                'server_id': 'tq_server_rpg',
+                'status': 'running' if self.running else 'stopped',
+                'uptime_seconds': uptime,
+                'port': self.port,
+                'clients': len(self.clients),
+                'messages': self.message_count
+            }
+            
+            heartbeat_json = json.dumps(heartbeat_data).encode('utf-8')
+            
+            # Crear socket UDP y enviar
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(1.0)
+            sock.sendto(heartbeat_json, (self.heartbeat_udp_host, self.heartbeat_udp_port))
+            sock.close()
+            
+            self.logger.debug(f"Heartbeat enviado a {self.heartbeat_udp_host}:{self.heartbeat_udp_port}")
+        except Exception as e:
+            # No loguear errores de heartbeat como error crítico (puede que el monitor no esté disponible)
+            self.logger.debug(f"Error enviando heartbeat (monitor puede no estar disponible): {e}")
+    
+    def heartbeat_loop(self):
+        """Bucle que envía heartbeats periódicamente"""
+        while not self.heartbeat_stop_event.is_set():
+            if self.running:
+                self.send_heartbeat()
+            # Esperar el intervalo o hasta que se detenga
+            if self.heartbeat_stop_event.wait(self.heartbeat_interval_seconds):
+                break  # Se detuvo
+    
+    def start_heartbeat(self):
+        """Inicia el envío de heartbeats en un thread separado"""
+        if not self.heartbeat_enabled:
+            return
+        
+        self.heartbeat_stop_event = threading.Event()
+        self.heartbeat_thread = threading.Thread(target=self.heartbeat_loop)
+        self.heartbeat_thread.daemon = True
+        self.heartbeat_thread.start()
+        self.logger.info(f"Heartbeat UDP iniciado: enviando a {self.heartbeat_udp_host}:{self.heartbeat_udp_port} cada {self.heartbeat_interval_seconds}s")
+        print(f"💓 Heartbeat UDP: {self.heartbeat_udp_host}:{self.heartbeat_udp_port} (cada {self.heartbeat_interval_seconds}s)")
+    
+    def stop_heartbeat(self):
+        """Detiene el envío de heartbeats"""
+        if self.heartbeat_stop_event:
+            self.heartbeat_stop_event.set()
+        if self.heartbeat_thread and self.heartbeat_thread.is_alive():
+            self.heartbeat_thread.join(timeout=2.0)
+        if self.heartbeat_enabled:
+            self.logger.info("Heartbeat UDP detenido")
+    
+    def is_port_listening(self) -> bool:
+        """
+        Verifica si el socket del servidor está abierto y listo para aceptar conexiones
+        
+        Returns:
+            bool: True si el socket está abierto, False en caso contrario
+        """
+        try:
+            if self.server_socket is None:
+                return False
+            # Verificar que el file descriptor sea válido (no -1)
+            return self.server_socket.fileno() != -1
+        except (AttributeError, OSError, ValueError):
+            # Si el socket está cerrado, fileno() puede lanzar una excepción
+            return False
         
     def start(self):
         """Inicia el servidor TCP"""
@@ -897,8 +1036,22 @@ class TQServerRPG:
             self.running = True
             self.start_time = datetime.now()
             
+            # Limpiar logs antiguos (mantener solo últimos 30 días)
+            print("🧹 Limpiando logs antiguos...")
+            cleanup_stats = funciones.cleanup_old_logs(days_to_keep=30)
+            if cleanup_stats.get('deleted_count', 0) > 0:
+                self.logger.info(f"Logs limpiados: {cleanup_stats['deleted_count']} archivos, "
+                               f"{cleanup_stats['size_freed_mb']} MB liberados")
+            
             # Iniciar servidor de health check
             self.start_health_server()
+            
+            # Iniciar envío de heartbeats
+            self.start_heartbeat()
+            
+            # Verificar que el socket está abierto
+            if not self.is_port_listening():
+                self.logger.warning(f"Advertencia: No se pudo verificar el estado del puerto {self.port}")
             
             self.logger.info(f"Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"🚀 Servidor TQ+RPG iniciado en {self.host}:{self.port}")
@@ -907,6 +1060,10 @@ class TQServerRPG:
             
             while self.running:
                 try:
+                    # Verificar que el socket sigue abierto
+                    if self.server_socket.fileno() == -1:
+                        raise socket.error("Socket cerrado inesperadamente")
+                    
                     client_socket, client_address = self.server_socket.accept()
                     client_thread = threading.Thread(
                         target=self.handle_client,
@@ -917,23 +1074,87 @@ class TQServerRPG:
                     
                 except socket.error as e:
                     if self.running:
-                        self.logger.error(f"Error aceptando conexión: {e}")
+                        self.logger.error(f"Error aceptando conexión o puerto cerrado: {e}")
+                        # Verificar si el socket se cerró verificando su file descriptor
+                        try:
+                            socket_closed = False
+                            try:
+                                if self.server_socket is None or self.server_socket.fileno() == -1:
+                                    socket_closed = True
+                            except (OSError, ValueError, AttributeError):
+                                socket_closed = True
+                            
+                            if socket_closed:
+                                # El socket está cerrado
+                                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                message = (
+                                    f"🚨 *Puerto {self.port} Cerrado*\n"
+                                    f"⏰ Hora: {timestamp}\n"
+                                    f"🔌 El puerto de escucha {self.port} se ha cerrado inesperadamente\n"
+                                    f"❌ Error: {str(e)}"
+                                )
+                                funciones.send_telegram_notification(message)
+                                self.logger.error(f"Puerto {self.port} cerrado - notificación enviada")
+                                break  # Salir del bucle si el puerto está cerrado
+                        except Exception as check_error:
+                            self.logger.error(f"Error verificando estado del puerto: {check_error}")
                         
+        except OSError as e:
+            # Error del sistema operativo (puerto en uso, permisos, etc.)
+            self.logger.error(f"Error del sistema iniciando servidor: {e}")
+            print(f"❌ Error iniciando servidor: {e}")
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            message = (
+                f"🚨 *Error Iniciando Servidor TQ*\n"
+                f"⏰ Hora: {timestamp}\n"
+                f"🔌 Puerto {self.port} no pudo iniciarse\n"
+                f"❌ Error: {str(e)}"
+            )
+            funciones.send_telegram_notification(message)
         except Exception as e:
             self.logger.error(f"Error iniciando servidor: {e}")
             print(f"❌ Error iniciando servidor: {e}")
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            message = (
+                f"🚨 *Error Iniciando Servidor TQ*\n"
+                f"⏰ Hora: {timestamp}\n"
+                f"❌ Error: {str(e)}"
+            )
+            funciones.send_telegram_notification(message)
             
     def stop(self):
         """Detiene el servidor"""
+        was_running = self.running
         self.running = False
         
         # Detener health server
         self.stop_health_server()
         
+        # Detener heartbeat
+        self.stop_heartbeat()
+        
         if self.server_socket:
-            self.server_socket.close()
+            try:
+                self.server_socket.close()
+            except Exception as e:
+                self.logger.error(f"Error cerrando socket: {e}")
+        
         self.logger.info("Servidor detenido")
         print("🛑 Servidor detenido")
+        
+        # Enviar notificación por Telegram si el servidor estaba corriendo
+        if was_running:
+            try:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                message = (
+                    f"⚠️ *Servidor TQ Detenido*\n"
+                    f"⏰ Hora: {timestamp}\n"
+                    f"🔌 Puerto {self.port} cerrado\n"
+                    f"🛑 El servicio del módulo se ha detenido"
+                )
+                funciones.send_telegram_notification(message)
+            except Exception as e:
+                self.logger.error(f"Error enviando notificación Telegram al detener: {e}")
         
     def handle_client(self, client_socket: socket.socket, client_address):
         """Maneja la conexión de un cliente"""
@@ -1167,7 +1388,11 @@ def main():
     
     # Crear y configurar servidor
     server = TQServerRPG(host='0.0.0.0', port=5003, 
-                         udp_host='179.43.115.190', udp_port=7007)
+                         udp_host='179.43.115.190', udp_port=7007,
+                         heartbeat_enabled=False,  # Cambiar a True para habilitar heartbeat
+                         heartbeat_udp_host='127.0.0.1',  # IP del monitor (127.0.0.1 = mismo servidor, o IP remota)
+                         heartbeat_udp_port=5006,  # Puerto UDP del monitor
+                         heartbeat_interval_seconds=300)  # 5 minutos
     
     # Verificar si se ejecuta en modo no interactivo (background)
     if len(sys.argv) > 1 and sys.argv[1] == '--daemon':

@@ -10,11 +10,11 @@ placeholder values with real ones.
 # Telegram notification settings (placeholders)
 # ---------------------------------------------------------------------------
 # Bot token obtained from BotFather (e.g., "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_BOT_TOKEN = "8477575451:AAHPSfQFJMNZtK0OiQHGEJH3ukkVP9P1ilE"
 
 # Chat ID of the user or group that should receive alerts.
 # You can obtain it by sending a message to the bot and checking the updates.
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+TELEGRAM_CHAT_ID = "5266332517"
 
 # ---------------------------------------------------------------------------
 # Email notification settings (optional placeholders)

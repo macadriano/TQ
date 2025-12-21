@@ -1,6 +1,10 @@
 import binascii
 import socket
 import os
+import glob
+import json
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 
 def bytes2hexa(valor_bytes):
@@ -246,3 +250,132 @@ def AcomodarFecha(fecha):
     nueva_fecha_hora = AjustarUTC(fecha_hora,(-3))
     str_fecha_hora = str(nueva_fecha_hora.year) + "/" + str(nueva_fecha_hora.month) + "/" + str(nueva_fecha_hora.day) + " " + str(nueva_fecha_hora.hour) + ":" + str(nueva_fecha_hora.minute) + ":" + str(nueva_fecha_hora.second)
     return str_fecha_hora
+
+def cleanup_old_logs(days_to_keep: int = 30, log_dir: str = "logs") -> dict:
+    """
+    Elimina archivos de log más antiguos que el número de días especificado
+    
+    Args:
+        days_to_keep: Número de días de logs a mantener (default: 30)
+        log_dir: Directorio de logs (default: "logs")
+        
+    Returns:
+        dict: Estadísticas de limpieza (archivos eliminados, espacio liberado)
+    """
+    try:
+        # Calcular fecha límite
+        cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+        
+        # Buscar todos los archivos de log en el directorio
+        log_patterns = [
+            os.path.join(log_dir, "LOG_*.txt"),
+            os.path.join(log_dir, "RPG_*.txt")
+        ]
+        
+        deleted_files = []
+        total_size_freed = 0
+        
+        for pattern in log_patterns:
+            for log_file in glob.glob(pattern):
+                try:
+                    # Obtener fecha de modificación del archivo
+                    file_mtime = datetime.fromtimestamp(os.path.getmtime(log_file))
+                    
+                    # Si el archivo es más antiguo que la fecha límite, eliminarlo
+                    if file_mtime < cutoff_date:
+                        file_size = os.path.getsize(log_file)
+                        os.remove(log_file)
+                        deleted_files.append(os.path.basename(log_file))
+                        total_size_freed += file_size
+                        print(f"Log eliminado: {os.path.basename(log_file)} "
+                              f"({file_size / 1024:.2f} KB, {file_mtime.strftime('%Y-%m-%d')})")
+                
+                except Exception as e:
+                    print(f"Error eliminando {log_file}: {e}")
+        
+        # Convertir bytes a MB para mejor legibilidad
+        size_mb = total_size_freed / (1024 * 1024) if total_size_freed > 0 else 0
+        
+        stats = {
+            'deleted_count': len(deleted_files),
+            'deleted_files': deleted_files,
+            'size_freed_bytes': total_size_freed,
+            'size_freed_mb': round(size_mb, 2),
+            'cutoff_date': cutoff_date.strftime('%Y-%m-%d'),
+            'days_kept': days_to_keep
+        }
+        
+        if deleted_files:
+            print(f"Limpieza completada: {len(deleted_files)} archivo(s) eliminado(s), "
+                  f"{size_mb:.2f} MB liberados")
+        else:
+            print(f"No hay archivos de log anteriores a {cutoff_date.strftime('%Y-%m-%d')}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"Error en limpieza de logs: {e}")
+        return {
+            'deleted_count': 0,
+            'deleted_files': [],
+            'size_freed_bytes': 0,
+            'size_freed_mb': 0,
+            'error': str(e)
+        }
+
+def send_telegram_notification(message: str) -> bool:
+    """
+    Envía un mensaje de notificación por Telegram usando la configuración de monitor_config.py
+    
+    Args:
+        message: Mensaje a enviar
+        
+    Returns:
+        bool: True si el mensaje se envió correctamente, False en caso contrario
+    """
+    try:
+        # Intentar importar la configuración de Telegram
+        try:
+            from monitor_config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+        except ImportError:
+            print("[telegram] Configuración de Telegram no encontrada (monitor_config.py)")
+            return False
+        
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            print("[telegram] Credenciales de Telegram no configuradas")
+            return False
+        
+        if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN" or TELEGRAM_CHAT_ID == "YOUR_TELEGRAM_CHAT_ID":
+            print("[telegram] Credenciales de Telegram no configuradas (placeholders)")
+            return False
+        
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        data = urllib.parse.urlencode(payload).encode()
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        
+        try:
+            req = urllib.request.Request(url, data=data)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp_data = resp.read().decode()
+                resp_json = json.loads(resp_data)
+                if resp_json.get("ok"):
+                    print("[telegram] Notificación enviada correctamente")
+                    return True
+                else:
+                    print(f"[telegram] Error de API Telegram: {resp_json}")
+                    return False
+        except urllib.error.URLError as e:
+            print(f"[telegram] Error de conexión: {e}")
+            return False
+        except Exception as e:
+            print(f"[telegram] Error enviando mensaje: {e}")
+            return False
+            
+    except Exception as e:
+        print(f"[telegram] Error inesperado: {e}")
+        return False
+

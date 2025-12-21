@@ -1,0 +1,24 @@
+# Logs
+logs/
+*.log
+monitor.log
+
+# PID files
+monitor.pid
+*.pid
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Configuración local (opcional - si quieres evitar commitear configs sensibles)
+# config_local.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
