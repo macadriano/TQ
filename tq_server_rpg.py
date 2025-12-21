@@ -1385,9 +1385,9 @@ def main():
     # Crear y configurar servidor
     server = TQServerRPG(host='0.0.0.0', port=5003, 
                          udp_host='179.43.115.190', udp_port=7007,
-                         heartbeat_enabled=False,  # Cambiar a True para habilitar heartbeat
+                         heartbeat_enabled=True,  # Heartbeat habilitado
                          heartbeat_udp_host='127.0.0.1',  # IP del monitor (127.0.0.1 = mismo servidor, o IP remota)
-                         heartbeat_udp_port=5006,  # Puerto UDP del monitor
+                         heartbeat_udp_port=9001,  # Puerto UDP del monitor (debe coincidir con ControlTQ/config.py)
                          heartbeat_interval_seconds=300)  # 5 minutos
     
     # Verificar si se ejecuta en modo no interactivo (background)

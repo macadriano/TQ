@@ -38,6 +38,7 @@ class HeartbeatMonitor:
         self.alert_sent = False
         self.last_alert_time: Optional[datetime] = None
         self.heartbeat_count = 0
+        self.start_time: Optional[datetime] = None  # Tiempo de inicio del monitor
         
         # Configuración
         self.udp_host = config.UDP_LISTEN_HOST
@@ -189,8 +190,18 @@ class HeartbeatMonitor:
         """Verifica si ha pasado el timeout sin recibir heartbeat"""
         if not self.last_heartbeat_time:
             # Nunca recibimos un heartbeat
-            if not self.alert_sent:
+            # PERO esperar al menos un timeout completo desde el inicio antes de alertar
+            if self.start_time:
+                time_since_start = (datetime.now() - self.start_time).total_seconds()
+                if time_since_start < self.timeout_seconds:
+                    # Aún estamos en período de gracia inicial, no alertar
+                    return
+            
+            # Solo alertar si ya pasó el timeout desde el inicio Y no se ha enviado alerta recientemente
+            if not self.alert_sent or self.can_send_alert_again():
                 self.send_down_alert("No se ha recibido ningún heartbeat desde el inicio")
+                self.alert_sent = True
+                self.last_alert_time = datetime.now()
             return
         
         elapsed = (datetime.now() - self.last_heartbeat_time).total_seconds()
@@ -254,12 +265,14 @@ class HeartbeatMonitor:
             self.udp_socket.settimeout(1.0)  # Timeout para permitir verificación periódica
             
             self.running = True
+            self.start_time = datetime.now()  # Registrar tiempo de inicio
             
             self.logger.info(f"Monitor de heartbeat iniciado en {self.udp_host}:{self.udp_port}")
             self.logger.info(f"Timeout configurado: {self.timeout_seconds} segundos")
             print(f"🚀 Monitor de Heartbeat iniciado en puerto {self.udp_port}")
             print(f"⏱️  Timeout: {self.timeout_seconds} segundos ({self.timeout_seconds/60:.1f} minutos)")
             print(f"📡 Esperando heartbeats del servidor TQ...")
+            print(f"⏳ Período de gracia: {self.timeout_seconds} segundos antes de alertar")
             
             # Bucle principal
             while self.running:
