@@ -39,6 +39,7 @@ class HeartbeatMonitor:
         self.last_alert_time: Optional[datetime] = None
         self.heartbeat_count = 0
         self.start_time: Optional[datetime] = None  # Tiempo de inicio del monitor
+        self.restart_attempted = False  # Flag para evitar múltiples intentos de reinicio
         
         # Configuración
         self.udp_host = config.UDP_LISTEN_HOST
@@ -164,10 +165,12 @@ class HeartbeatMonitor:
         # Resetear flag de alerta solo después de actualizar last_heartbeat_time
         if was_down:
             self.alert_sent = False
+            self.restart_attempted = False  # Resetear flag de reinicio cuando se recupera
             self.send_recovery_notification()
         else:
             # Si no estaba caído, asegurar que el flag esté reseteado
             self.alert_sent = False
+            self.restart_attempted = False
         
         uptime = data.get('uptime_seconds', 0)
         server_id = data.get('server_id', 'tq_server_rpg')
@@ -237,8 +240,92 @@ class HeartbeatMonitor:
         elapsed = (datetime.now() - self.last_alert_time).total_seconds()
         return elapsed >= cooldown
     
+    def restart_server(self) -> bool:
+        """Intenta reiniciar el servidor ejecutando stop y start scripts"""
+        if not getattr(config, 'AUTO_RESTART_ENABLED', True):
+            self.logger.info("Reinicio automático deshabilitado en configuración")
+            return False
+        
+        try:
+            import subprocess
+            
+            # Obtener directorio del servidor (directorio padre de ControlTQ)
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            stop_script = getattr(config, 'STOP_SCRIPT', 'stop_server_rpg.sh')
+            start_script = getattr(config, 'START_SCRIPT', 'start_server_rpg.sh')
+            delay = getattr(config, 'RESTART_DELAY_SECONDS', 2)
+            
+            # Construir rutas completas
+            stop_path = os.path.join(script_dir, stop_script)
+            start_path = os.path.join(script_dir, start_script)
+            
+            # Verificar que los scripts existan
+            if not os.path.exists(stop_path):
+                self.logger.error(f"Script de stop no encontrado: {stop_path}")
+                return False
+            if not os.path.exists(start_path):
+                self.logger.error(f"Script de start no encontrado: {start_path}")
+                return False
+            
+            self.logger.info(f"Intentando reiniciar servidor desde {script_dir}")
+            self.logger.info(f"Ejecutando: {stop_script} -> esperar {delay}s -> {start_script}")
+            
+            # Ejecutar stop
+            try:
+                result = subprocess.run(
+                    ['bash', stop_path],
+                    cwd=script_dir,
+                    timeout=15,
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    self.logger.info("Servidor detenido correctamente")
+                else:
+                    self.logger.warning(f"Stop script retornó código {result.returncode}")
+                    if result.stderr:
+                        self.logger.warning(f"Stop stderr: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                self.logger.error("Timeout ejecutando stop script")
+                return False
+            except Exception as e:
+                self.logger.error(f"Error ejecutando stop script: {e}")
+                return False
+            
+            # Esperar el delay configurado
+            self.logger.info(f"Esperando {delay} segundos antes de iniciar...")
+            time.sleep(delay)
+            
+            # Ejecutar start
+            try:
+                result = subprocess.run(
+                    ['bash', start_path],
+                    cwd=script_dir,
+                    timeout=15,
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    self.logger.info("Servidor iniciado correctamente")
+                    return True
+                else:
+                    self.logger.error(f"Start script retornó código {result.returncode}")
+                    if result.stderr:
+                        self.logger.error(f"Start stderr: {result.stderr}")
+                    return False
+            except subprocess.TimeoutExpired:
+                self.logger.error("Timeout ejecutando start script")
+                return False
+            except Exception as e:
+                self.logger.error(f"Error ejecutando start script: {e}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error en reinicio automático: {e}")
+            return False
+    
     def send_down_alert(self, reason: str):
-        """Envía alerta de servidor caído"""
+        """Envía alerta de servidor caído y opcionalmente reinicia el servidor"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         last_seen = ""
@@ -257,6 +344,29 @@ class HeartbeatMonitor:
         
         self.logger.error(f"Servidor caído detectado: {reason}")
         self.send_telegram_alert(message)
+        
+        # Intentar reinicio automático (solo una vez por caída)
+        if not self.restart_attempted:
+            self.logger.info("Intentando reinicio automático del servidor...")
+            restart_success = self.restart_server()
+            self.restart_attempted = True
+            
+            if restart_success:
+                message_restart = (
+                    f"🔄 *Reinicio Automático Ejecutado*\n"
+                    f"⏰ Hora: {timestamp}\n"
+                    f"✅ Servidor reiniciado automáticamente\n"
+                    f"📡 Esperando heartbeats del servidor..."
+                )
+                self.send_telegram_alert(message_restart)
+            else:
+                message_restart = (
+                    f"⚠️ *Reinicio Automático Falló*\n"
+                    f"⏰ Hora: {timestamp}\n"
+                    f"❌ No se pudo reiniciar el servidor automáticamente\n"
+                    f"🔧 Revisar logs y reiniciar manualmente"
+                )
+                self.send_telegram_alert(message_restart)
         
         email_subject = "ALERTA: Servidor TQ Caído"
         email_body = (

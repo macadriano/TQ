@@ -75,3 +75,22 @@ LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
 # ---------------------------------------------------------------------------
 # Número de intentos antes de enviar una nueva alerta (evitar spam)
 ALERT_COOLDOWN_SECONDS = 600  # 10 minutos entre alertas del mismo tipo
+
+# ---------------------------------------------------------------------------
+# Configuración de Reinicio Automático
+# ---------------------------------------------------------------------------
+# Habilitar reinicio automático del servidor cuando se detecta caída
+AUTO_RESTART_ENABLED = True
+
+# Ruta al directorio del servidor (donde están los scripts stop/start)
+# Se calcula automáticamente como el directorio padre de ControlTQ
+# Si necesitas una ruta personalizada, descomenta y ajusta:
+# SERVER_DIR = "/ruta/personalizada"
+SERVER_DIR = None  # None = usar directorio padre automáticamente
+
+# Nombres de los scripts de control
+STOP_SCRIPT = "stop_server_rpg.sh"
+START_SCRIPT = "start_server_rpg.sh"
+
+# Tiempo de espera entre stop y start (segundos)
+RESTART_DELAY_SECONDS = 2

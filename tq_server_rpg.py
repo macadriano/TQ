@@ -28,7 +28,7 @@ class TQServerRPG:
     def __init__(self, host: str = '0.0.0.0', port: int = 5003, 
                  udp_host: str = '179.43.115.190', udp_port: int = 7007,
                  health_port: int = 5004,
-                 tcp_forward_host: str = '168.197.48.154', tcp_forward_port: int = 5003,
+                 tcp_forward_host: str = '168.197.48.154', tcp_forward_port: int = 5005,
                  tcp_forward_enabled: bool = True,
                  heartbeat_enabled: bool = True,
                  heartbeat_udp_host: str = '127.0.0.1',
@@ -56,7 +56,10 @@ class TQServerRPG:
         self.server_socket = None
         self.health_server = None
         self.clients: Dict[str, socket.socket] = {}
+        self.client_last_activity: Dict[str, datetime] = {}  # Tracking de última actividad por cliente
         self.running = False
+        self.cleanup_thread = None
+        self.cleanup_stop_event = None
         self.message_count = 0
         self.terminal_id = ""
         self.start_time = None
@@ -1004,6 +1007,74 @@ class TQServerRPG:
         if self.heartbeat_enabled:
             self.logger.info("Heartbeat UDP detenido")
     
+    def cleanup_inactive_connections(self):
+        """Limpia conexiones inactivas periódicamente"""
+        INACTIVE_TIMEOUT_SECONDS = 600  # 10 minutos sin actividad
+        
+        while not self.cleanup_stop_event.is_set():
+            try:
+                if not self.running:
+                    break
+                
+                current_time = datetime.now()
+                clients_to_close = []
+                
+                # Verificar cada cliente
+                for client_id, client_socket in list(self.clients.items()):
+                    try:
+                        # Verificar si el socket sigue válido
+                        if client_socket.fileno() == -1:
+                            clients_to_close.append(client_id)
+                            continue
+                        
+                        # Verificar última actividad
+                        last_activity = self.client_last_activity.get(client_id)
+                        if last_activity:
+                            inactive_time = (current_time - last_activity).total_seconds()
+                            if inactive_time > INACTIVE_TIMEOUT_SECONDS:
+                                self.logger.warning(f"Conexión {client_id} inactiva por {inactive_time:.0f}s - cerrando")
+                                clients_to_close.append(client_id)
+                    except Exception as e:
+                        self.logger.debug(f"Error verificando cliente {client_id}: {e}")
+                        clients_to_close.append(client_id)
+                
+                # Cerrar conexiones inactivas
+                for client_id in clients_to_close:
+                    try:
+                        if client_id in self.clients:
+                            sock = self.clients[client_id]
+                            sock.close()
+                            del self.clients[client_id]
+                        if client_id in self.client_last_activity:
+                            del self.client_last_activity[client_id]
+                        self.logger.info(f"Conexión inactiva cerrada: {client_id}")
+                    except Exception as e:
+                        self.logger.error(f"Error cerrando conexión inactiva {client_id}: {e}")
+                
+                # Esperar 60 segundos antes de la próxima verificación
+                if self.cleanup_stop_event.wait(60):
+                    break
+                    
+            except Exception as e:
+                self.logger.error(f"Error en limpieza de conexiones: {e}")
+                time.sleep(60)  # Esperar antes de reintentar
+    
+    def start_connection_cleanup(self):
+        """Inicia el thread de limpieza de conexiones inactivas"""
+        self.cleanup_stop_event = threading.Event()
+        self.cleanup_thread = threading.Thread(target=self.cleanup_inactive_connections)
+        self.cleanup_thread.daemon = True
+        self.cleanup_thread.start()
+        self.logger.info("Thread de limpieza de conexiones iniciado")
+    
+    def stop_connection_cleanup(self):
+        """Detiene el thread de limpieza de conexiones"""
+        if self.cleanup_stop_event:
+            self.cleanup_stop_event.set()
+        if self.cleanup_thread and self.cleanup_thread.is_alive():
+            self.cleanup_thread.join(timeout=2.0)
+        self.logger.info("Thread de limpieza de conexiones detenido")
+    
     def is_port_listening(self) -> bool:
         """
         Verifica si el socket del servidor está abierto y listo para aceptar conexiones
@@ -1025,11 +1096,15 @@ class TQServerRPG:
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.settimeout(5.0)  # Timeout para aceptar conexiones
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(5)
             
             self.running = True
             self.start_time = datetime.now()
+            
+            # Iniciar thread de limpieza de conexiones inactivas
+            self.start_connection_cleanup()
             
             # Limpiar logs antiguos (mantener solo últimos 30 días)
             print("🧹 Limpiando logs antiguos...")
@@ -1060,6 +1135,10 @@ class TQServerRPG:
                         raise socket.error("Socket cerrado inesperadamente")
                     
                     client_socket, client_address = self.server_socket.accept()
+                    # Registrar actividad inicial
+                    client_id = f"{client_address[0]}:{client_address[1]}"
+                    self.client_last_activity[client_id] = datetime.now()
+                    
                     client_thread = threading.Thread(
                         target=self.handle_client,
                         args=(client_socket, client_address)
@@ -1128,6 +1207,9 @@ class TQServerRPG:
         # Detener heartbeat
         self.stop_heartbeat()
         
+        # Detener limpieza de conexiones
+        self.stop_connection_cleanup()
+        
         if self.server_socket:
             try:
                 self.server_socket.close()
@@ -1156,27 +1238,49 @@ class TQServerRPG:
         client_id = f"{client_address[0]}:{client_address[1]}"
         self.clients[client_id] = client_socket
         
+        # Configurar timeout para la conexión (5 minutos de inactividad)
+        client_socket.settimeout(300.0)  # 5 minutos sin actividad = cerrar conexión
+        
         self.logger.info(f"Nueva conexión desde {client_id}")
         print(f"🔗 Nueva conexión desde {client_id}")
         
         try:
             while self.running:
-                # Recibir datos del cliente
-                data = client_socket.recv(1024)
-                if not data:
+                try:
+                    # Recibir datos del cliente
+                    data = client_socket.recv(1024)
+                    if not data:
+                        break
+                    
+                    # Actualizar última actividad
+                    self.client_last_activity[client_id] = datetime.now()
+                    
+                    # Procesar el mensaje recibido con conversión RPG y reenvío UDP
+                    self.process_message_with_rpg(data, client_id)
+                    
+                except socket.timeout:
+                    # Timeout de inactividad - cerrar conexión
+                    self.logger.warning(f"Conexión {client_id} inactiva por más de 5 minutos - cerrando")
+                    print(f"⏱️  Conexión {client_id} inactiva - cerrando")
                     break
                     
-                # Procesar el mensaje recibido con conversión RPG y reenvío UDP
-                self.process_message_with_rpg(data, client_id)
-                
+        except socket.error as e:
+            # Error de socket (conexión cerrada por el cliente o error de red)
+            self.logger.debug(f"Error de socket con cliente {client_id}: {e}")
         except Exception as e:
             self.logger.error(f"Error manejando cliente {client_id}: {e}")
             print(f"❌ Error con cliente {client_id}: {e}")
             
         finally:
             # Limpiar conexión
-            client_socket.close()
-            del self.clients[client_id]
+            try:
+                client_socket.close()
+            except:
+                pass
+            if client_id in self.clients:
+                del self.clients[client_id]
+            if client_id in self.client_last_activity:
+                del self.client_last_activity[client_id]
             self.logger.info(f"Conexión cerrada: {client_id}")
             print(f"🔌 Conexión cerrada: {client_id}")
 
