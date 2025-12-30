@@ -259,19 +259,31 @@ class HeartbeatMonitor:
             stop_path = os.path.join(script_dir, stop_script)
             start_path = os.path.join(script_dir, start_script)
             
+            self.logger.info(f"=== INICIANDO REINICIO AUTOMÁTICO ===")
+            self.logger.info(f"Directorio base: {script_dir}")
+            self.logger.info(f"Script stop: {stop_path}")
+            self.logger.info(f"Script start: {start_path}")
+            
             # Verificar que los scripts existan
             if not os.path.exists(stop_path):
-                self.logger.error(f"Script de stop no encontrado: {stop_path}")
+                self.logger.error(f"ERROR: Script de stop no encontrado: {stop_path}")
+                self.logger.error(f"Directorio actual del monitor: {os.path.dirname(os.path.abspath(__file__))}")
                 return False
             if not os.path.exists(start_path):
-                self.logger.error(f"Script de start no encontrado: {start_path}")
+                self.logger.error(f"ERROR: Script de start no encontrado: {start_path}")
                 return False
             
-            self.logger.info(f"Intentando reiniciar servidor desde {script_dir}")
+            # Verificar permisos de ejecución
+            if not os.access(stop_path, os.X_OK):
+                self.logger.warning(f"Script stop no tiene permisos de ejecución, intentando de todas formas...")
+            if not os.access(start_path, os.X_OK):
+                self.logger.warning(f"Script start no tiene permisos de ejecución, intentando de todas formas...")
+            
             self.logger.info(f"Ejecutando: {stop_script} -> esperar {delay}s -> {start_script}")
             
             # Ejecutar stop
             try:
+                self.logger.info(f"Ejecutando stop script: bash {stop_path}")
                 result = subprocess.run(
                     ['bash', stop_path],
                     cwd=script_dir,
@@ -279,17 +291,22 @@ class HeartbeatMonitor:
                     capture_output=True,
                     text=True
                 )
+                self.logger.info(f"Stop script stdout: {result.stdout}")
+                if result.stderr:
+                    self.logger.warning(f"Stop script stderr: {result.stderr}")
+                
                 if result.returncode == 0:
-                    self.logger.info("Servidor detenido correctamente")
+                    self.logger.info("✅ Servidor detenido correctamente")
                 else:
-                    self.logger.warning(f"Stop script retornó código {result.returncode}")
-                    if result.stderr:
-                        self.logger.warning(f"Stop stderr: {result.stderr}")
+                    self.logger.warning(f"⚠️ Stop script retornó código {result.returncode} (continuando de todas formas)")
             except subprocess.TimeoutExpired:
-                self.logger.error("Timeout ejecutando stop script")
+                self.logger.error("❌ Timeout ejecutando stop script (más de 15 segundos)")
+                return False
+            except FileNotFoundError:
+                self.logger.error("❌ Error: 'bash' no encontrado. ¿Está instalado bash?")
                 return False
             except Exception as e:
-                self.logger.error(f"Error ejecutando stop script: {e}")
+                self.logger.error(f"❌ Error ejecutando stop script: {e}", exc_info=True)
                 return False
             
             # Esperar el delay configurado
@@ -298,6 +315,7 @@ class HeartbeatMonitor:
             
             # Ejecutar start
             try:
+                self.logger.info(f"Ejecutando start script: bash {start_path}")
                 result = subprocess.run(
                     ['bash', start_path],
                     cwd=script_dir,
@@ -305,23 +323,32 @@ class HeartbeatMonitor:
                     capture_output=True,
                     text=True
                 )
+                self.logger.info(f"Start script stdout: {result.stdout}")
+                if result.stderr:
+                    self.logger.warning(f"Start script stderr: {result.stderr}")
+                
                 if result.returncode == 0:
-                    self.logger.info("Servidor iniciado correctamente")
+                    self.logger.info("✅ Servidor iniciado correctamente")
+                    self.logger.info(f"=== REINICIO AUTOMÁTICO COMPLETADO EXITOSAMENTE ===")
                     return True
                 else:
-                    self.logger.error(f"Start script retornó código {result.returncode}")
+                    self.logger.error(f"❌ Start script retornó código {result.returncode}")
                     if result.stderr:
-                        self.logger.error(f"Start stderr: {result.stderr}")
+                        self.logger.error(f"Start stderr completo: {result.stderr}")
+                    self.logger.error(f"=== REINICIO AUTOMÁTICO FALLÓ ===")
                     return False
             except subprocess.TimeoutExpired:
-                self.logger.error("Timeout ejecutando start script")
+                self.logger.error("❌ Timeout ejecutando start script (más de 15 segundos)")
+                return False
+            except FileNotFoundError:
+                self.logger.error("❌ Error: 'bash' no encontrado. ¿Está instalado bash?")
                 return False
             except Exception as e:
-                self.logger.error(f"Error ejecutando start script: {e}")
+                self.logger.error(f"❌ Error ejecutando start script: {e}", exc_info=True)
                 return False
                 
         except Exception as e:
-            self.logger.error(f"Error en reinicio automático: {e}")
+            self.logger.error(f"❌ Error general en reinicio automático: {e}", exc_info=True)
             return False
     
     def send_down_alert(self, reason: str):
@@ -347,9 +374,12 @@ class HeartbeatMonitor:
         
         # Intentar reinicio automático (solo una vez por caída)
         if not self.restart_attempted:
-            self.logger.info("Intentando reinicio automático del servidor...")
+            self.logger.error("⚠️ SERVIDOR CAÍDO DETECTADO - Iniciando reinicio automático...")
+            self.logger.error(f"Flag restart_attempted antes: {self.restart_attempted}")
             restart_success = self.restart_server()
             self.restart_attempted = True
+            self.logger.error(f"Flag restart_attempted después: {self.restart_attempted}")
+            self.logger.error(f"Resultado del reinicio: {restart_success}")
             
             if restart_success:
                 message_restart = (
@@ -364,9 +394,12 @@ class HeartbeatMonitor:
                     f"⚠️ *Reinicio Automático Falló*\n"
                     f"⏰ Hora: {timestamp}\n"
                     f"❌ No se pudo reiniciar el servidor automáticamente\n"
-                    f"🔧 Revisar logs y reiniciar manualmente"
+                    f"🔧 Revisar logs del monitor y reiniciar manualmente\n"
+                    f"📁 Log: {config.LOG_FILE if hasattr(config, 'LOG_FILE') else 'logs/heartbeat_monitor.log'}"
                 )
                 self.send_telegram_alert(message_restart)
+        else:
+            self.logger.debug("Reinicio ya intentado previamente, omitiendo")
         
         email_subject = "ALERTA: Servidor TQ Caído"
         email_body = (
