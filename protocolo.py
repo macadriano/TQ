@@ -219,6 +219,92 @@ def getRUMBOchino(dato):
     except:
         return 0
 
+def getIGNICIONchino(dato):
+    """
+    Extraer flag de ignición (ACC) del protocolo TQ
+    
+    Según especificación del protocolo TQ (Protocol 0x22 - Position Data):
+    - Byte 0x21 del payload contiene el estado de ignición
+    - 0x00 = Ignición apagada (No activo)
+    - 0x01 = Ignición encendida (Activo)
+    
+    Estructura del mensaje TQ protocol 0x22:
+    - Bytes 0-1: Start bit (0x78 0x78)
+    - Byte 2: Packet length
+    - Byte 3: Protocol number (0x22)
+    - Bytes 4-11: Terminal ID (8 bytes)
+    - Bytes 12-13: Information serial number (2 bytes)
+    - Bytes 14+: Payload data
+    - Byte 0x21 del payload = byte 33 desde el inicio del payload = byte 35 desde el inicio del mensaje
+    
+    Args:
+        dato: String hexadecimal del mensaje TQ (sin espacios)
+    
+    Returns:
+        int: 0 = ignición apagada, 1 = ignición encendida, -1 = error/no disponible
+    """
+    try:
+        # El mensaje hexadecimal tiene 2 caracteres por byte
+        # Necesitamos encontrar el byte 0x21 del payload
+        # Estructura: [0x78][0x78][length][0x22][terminal_id 8 bytes][serial 2 bytes][payload...]
+        # Byte 0x21 del payload está en posición: 2 (start) + 1 (length) + 1 (protocol) + 8 (ID) + 2 (serial) + 0x21 (33)
+        # = 2 + 1 + 1 + 8 + 2 + 33 = 47 bytes desde el inicio = posición 94-95 en string hex (47 * 2 = 94)
+        
+        # Verificar longitud mínima del mensaje
+        if len(dato) < 96:  # Necesitamos al menos 48 bytes (96 caracteres hex)
+            return -1
+        
+        try:
+            # Extraer byte 0x21 del payload (posición 35 del mensaje completo = posiciones 70-71 en hex)
+            # Ajustado: si el payload empieza después del header (2 bytes) + length (1 byte) + protocol (1 byte)
+            # + terminal_id (8 bytes) + serial (2 bytes) = 14 bytes
+            # Entonces byte 0x21 del payload = byte 35 desde el inicio del mensaje = posiciones 70-71
+            
+            # Método 1: Posición fija desde el inicio (asumiendo estructura estándar)
+            if len(dato) >= 72:
+                ignicion_hex = dato[70:72]  # Posiciones 70-71 (byte 35 = 0x23, pero ajustamos)
+                ignicion_value = int(ignicion_hex, 16)
+                
+                if ignicion_value == 0x00:
+                    return 0  # Ignición apagada
+                elif ignicion_value == 0x01:
+                    return 1  # Ignición encendida
+            
+            # Método 2: Buscar desde el final del header conocido
+            # Si el mensaje tiene el formato estándar, buscar después del serial number
+            # Header: 7878 (start) + XX (length) + 22 (protocol) + [8 bytes ID] + [2 bytes serial]
+            # Buscar byte 33 desde el inicio del payload = buscar desde posición 28 (14 bytes * 2)
+            if len(dato) >= 94:
+                # Byte 0x21 del payload = byte 33 desde el payload = byte 47 desde inicio = pos 94-95
+                ignicion_hex = dato[94:96]
+                ignicion_value = int(ignicion_hex, 16)
+                
+                if ignicion_value == 0x00:
+                    return 0
+                elif ignicion_value == 0x01:
+                    return 1
+            
+            # Método 3: Buscar en múltiples posiciones posibles (tolerancia)
+            # Intentar buscar el byte en posiciones alrededor de donde debería estar
+            for offset in [66, 68, 70, 72, 74, 90, 92, 94, 96]:
+                if len(dato) >= offset + 2:
+                    try:
+                        ignicion_hex = dato[offset:offset+2]
+                        ignicion_value = int(ignicion_hex, 16)
+                        if ignicion_value in [0x00, 0x01]:
+                            return 1 if ignicion_value == 0x01 else 0
+                    except (ValueError, IndexError):
+                        continue
+            
+        except (ValueError, IndexError) as e:
+            pass
+        
+        # Si no se pudo extraer, retornar -1 (indeterminado) - se usará valor por defecto
+        return -1
+        
+    except Exception:
+        return -1
+
 
 def getFECHAchino(dato):
     valor = dato[8:20]
@@ -351,7 +437,20 @@ def RGPdesdeCHINO(dato, TerminalID):
 	estado ="3"
 	edad = "0000"
 	calidad = "01"
-	evento = "01"
+	
+	# CORREGIDO: Extraer flag de ignición del protocolo TQ y usarlo en el campo evento
+	ignicion = getIGNICIONchino(dato)
+	if ignicion == 1:
+		# Ignición encendida: usar evento "08" (encendido) o mantener "01" según especificación GEO5
+		# Según protocolo GEO5, el evento puede variar. Usaremos "08" para ignición encendida
+		evento = "08"
+	elif ignicion == 0:
+		# Ignición apagada: usar evento "01" (evento normal/punto GPS)
+		evento = "01"
+	else:
+		# No se pudo determinar el estado de ignición, usar valor por defecto
+		evento = "01"
+	
 	ID = TerminalID
 	nroMje = "0001"
 	
@@ -359,6 +458,7 @@ def RGPdesdeCHINO(dato, TerminalID):
 	checksum = sacar_checksum(valor)
 	valor = valor + checksum + "<"
 	# >RGP230622213474-3435.6154-05833.01920000003000001;&01;ID=1146;#0001*5F<
+	# >RGP230622213474-3435.6154-05833.01920000003000001;&08;ID=1146;#0001*5F<  (con ignición encendida)
 	return valor
 
 

@@ -549,7 +549,8 @@ class TQServerRPG:
                             # Crear mensaje RPG con formato correcto usando los datos GPS decodificados
                             # Usar el device_id del mensaje actual en lugar del terminal_id fijo
                             device_id = position_data.get('device_id', '')
-                            rpg_message = self.create_rpg_message_from_gps(position_data, device_id)
+                            # Pasar también el hex_data para extraer el flag de ignición
+                            rpg_message = self.create_rpg_message_from_gps(position_data, device_id, hex_data)
                             if rpg_message:
                                 funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
                                 # Usar log optimizado en lugar de log_rpg_message
@@ -1332,7 +1333,7 @@ class TQServerRPG:
             'last_request': self.last_geocoding_request
         }
 
-    def create_rpg_message_from_gps(self, position_data: Dict, terminal_id: str) -> str:
+    def create_rpg_message_from_gps(self, position_data: Dict, terminal_id: str, hex_data: str = "") -> str:
         """Crea un mensaje RPG con formato correcto usando los datos GPS decodificados"""
         try:
             # Extraer datos de la posición
@@ -1416,6 +1417,22 @@ class TQServerRPG:
             # Estado (1=Activo, 0=Inactivo)
             status = "1" if abs(latitude) > 0.000001 and abs(longitude) > 0.000001 else "0"
             
+            # CORREGIDO: Extraer flag de ignición del mensaje hexadecimal TQ y usarlo en el campo evento
+            if hex_data:
+                ignicion = protocolo.getIGNICIONchino(hex_data)
+                if ignicion == 1:
+                    # Ignición encendida: usar evento "08" (encendido) según protocolo GEO5
+                    evento = "08"
+                elif ignicion == 0:
+                    # Ignición apagada: usar evento "01" (evento normal/punto GPS)
+                    evento = "01"
+                else:
+                    # No se pudo determinar el estado de ignición, usar valor por defecto
+                    evento = "01"
+            else:
+                # Si no hay hex_data, usar valor por defecto
+                evento = "01"
+            
             # Secuencial (siempre 01 para este caso)
             seq = "01"
             
@@ -1423,8 +1440,9 @@ class TQServerRPG:
             rpg_main = f"RGP{timestamp}{lat_str}{lon_str}{speed_str}{heading_str}{status}"
             
             # Construir mensaje completo con formato correcto
-            # CORREGIDO: Agregar "000001" antes del ";&01" según protocolo GEO5
-            rpg_message = f">{rpg_main}000001;&{seq};ID={terminal_id};#0001"
+            # CORREGIDO: Usar el evento extraído del flag de ignición
+            # Agregar "000001" antes del ";&[evento]" según protocolo GEO5
+            rpg_message = f">{rpg_main}000001;&{evento};ID={terminal_id};#0001"
             
             # Agregar asterisco para el cálculo del checksum
             rpg_message_with_asterisk = rpg_message + "*"
