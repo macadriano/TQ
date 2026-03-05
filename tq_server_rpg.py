@@ -30,6 +30,8 @@ class TQServerRPG:
                  health_port: int = 5004,
                  tcp_forward_host: str = '168.197.48.154', tcp_forward_port: int = 5005,
                  tcp_forward_enabled: bool = True,
+                 tcp_forward_host_2: str = '34.95.221.179', tcp_forward_port_2: int = 5003,
+                 tcp_forward_enabled_2: bool = True,
                  heartbeat_enabled: bool = True,
                  heartbeat_udp_host: str = '127.0.0.1',
                  heartbeat_udp_port: int = 9001,
@@ -44,6 +46,9 @@ class TQServerRPG:
         self.tcp_forward_host = tcp_forward_host
         self.tcp_forward_port = tcp_forward_port
         self.tcp_forward_enabled = tcp_forward_enabled
+        self.tcp_forward_host_2 = tcp_forward_host_2
+        self.tcp_forward_port_2 = tcp_forward_port_2
+        self.tcp_forward_enabled_2 = tcp_forward_enabled_2
         
         # Configuración de heartbeat UDP
         self.heartbeat_enabled = heartbeat_enabled
@@ -395,6 +400,9 @@ class TQServerRPG:
             if tcp_sent and self.tcp_forward_enabled:
                 hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
                 destinations.append(("TCP", self.tcp_forward_host, self.tcp_forward_port, hex_data))
+            if tcp_sent and self.tcp_forward_enabled_2:
+                hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
+                destinations.append(("TCP", self.tcp_forward_host_2, self.tcp_forward_port_2, hex_data))
             
             # Usar el logger optimizado
             self.rpg_logger.log_rpg_attempt(
@@ -415,22 +423,27 @@ class TQServerRPG:
 
     def send_tcp_raw_data(self, data: bytes):
         """
-        Reenvía los datos crudos por TCP a la IP y puerto configurados
+        Reenvía los datos crudos por TCP a las IP y puertos configurados
         """
-        if not self.tcp_forward_enabled:
-            return
+        # Primer destino TCP
+        if self.tcp_forward_enabled:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(2.0)
+                    sock.connect((self.tcp_forward_host, self.tcp_forward_port))
+                    sock.sendall(data)
+            except Exception as e:
+                self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host}:{self.tcp_forward_port}: {e}")
 
-        try:
-            # Crear socket TCP
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                # Timeout corto para no bloquear la operación principal
-                sock.settimeout(2.0)
-                sock.connect((self.tcp_forward_host, self.tcp_forward_port))
-                sock.sendall(data)
-                # No loggear verbose - reenvío TCP es operación normal
-                # print(f"📤 Datos reenviados TCP a {self.tcp_forward_host}:{self.tcp_forward_port}")
-        except Exception as e:
-            self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host}:{self.tcp_forward_port}: {e}")
+        # Segundo destino TCP
+        if self.tcp_forward_enabled_2:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(2.0)
+                    sock.connect((self.tcp_forward_host_2, self.tcp_forward_port_2))
+                    sock.sendall(data)
+            except Exception as e:
+                self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host_2}:{self.tcp_forward_port_2}: {e}")
 
 
     def process_message_with_rpg(self, data: bytes, client_id: str):
@@ -856,6 +869,9 @@ class TQServerRPG:
             'tcp_forward_enabled': self.tcp_forward_enabled,
             'tcp_forward_host': self.tcp_forward_host,
             'tcp_forward_port': self.tcp_forward_port,
+            'tcp_forward_enabled_2': self.tcp_forward_enabled_2,
+            'tcp_forward_host_2': self.tcp_forward_host_2,
+            'tcp_forward_port_2': self.tcp_forward_port_2,
             'terminal_id': self.terminal_id,
             'connected_clients': len(self.clients),
             'total_messages': self.message_count,
@@ -1127,6 +1143,13 @@ class TQServerRPG:
             self.logger.info(f"Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"🚀 Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"📡 UDP configurado para reenvío a {self.udp_host}:{self.udp_port}")
+            if self.tcp_forward_enabled or self.tcp_forward_enabled_2:
+                tcp_dests = []
+                if self.tcp_forward_enabled:
+                    tcp_dests.append(f"{self.tcp_forward_host}:{self.tcp_forward_port}")
+                if self.tcp_forward_enabled_2:
+                    tcp_dests.append(f"{self.tcp_forward_host_2}:{self.tcp_forward_port_2}")
+                print(f"📤 TCP reenvío paquete original a: {', '.join(tcp_dests)}")
             print("📡 Esperando conexiones de equipos...")
             
             while self.running:
