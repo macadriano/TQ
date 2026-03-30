@@ -39,7 +39,8 @@ class TQServerRPG:
                  udp_secondary_geo5_enabled: bool = True,
                  udp_secondary_geo5_port: int = 5031,
                  udp_secondary_geo5_hosts: Optional[Tuple[str, ...]] = None,
-                 udp_secondary_geo5_device_ids: Optional[Tuple[str, ...]] = None):
+                 udp_secondary_geo5_device_ids: Optional[Tuple[str, ...]] = None,
+                 tcp_forward_excluded_device_ids: Optional[Tuple[str, ...]] = None):
         self.host = host
         self.port = port
         self.udp_host = udp_host
@@ -74,6 +75,12 @@ class TQServerRPG:
         if _sec_ids is None:
             _sec_ids = ('95999', '87877')
         self.udp_secondary_geo5_device_ids: FrozenSet[str] = frozenset(_sec_ids)
+
+        # Exclusiones de reenvío TCP (raw): permite validar que updates vienen por UDP
+        _tcp_excl = tcp_forward_excluded_device_ids
+        if _tcp_excl is None:
+            _tcp_excl = ('95999', '87877')
+        self.tcp_forward_excluded_device_ids: FrozenSet[str] = frozenset(_tcp_excl)
 
         self.server_socket = None
         self.health_server = None
@@ -438,10 +445,29 @@ class TQServerRPG:
             self.logger.error(f"Error en log RPG optimizado: {e}")
 
 
-    def send_tcp_raw_data(self, data: bytes):
+    def _device_id_is_tcp_forward_excluded(self, rpg_device_id: str, full_device_id: str) -> bool:
+        """
+        True si el equipo NO debe reenviarse por TCP (raw).
+        Acepta ID RPG (5 dígitos) y/o ID completo (10 dígitos); compara contra la lista configurada.
+        """
+        rpg = (rpg_device_id or '').strip()
+        full = (full_device_id or '').strip()
+        excluded = self.tcp_forward_excluded_device_ids
+        if rpg and rpg in excluded:
+            return True
+        if full and full in excluded:
+            return True
+        if len(full) >= 5 and full[-5:] in excluded:
+            return True
+        return False
+
+    def send_tcp_raw_data(self, data: bytes, rpg_device_id: str = "", full_device_id: str = ""):
         """
         Reenvía los datos crudos por TCP a las IP y puertos configurados
         """
+        if self._device_id_is_tcp_forward_excluded(rpg_device_id, full_device_id):
+            return
+
         # Primer destino TCP
         if self.tcp_forward_enabled:
             try:
@@ -500,16 +526,23 @@ class TQServerRPG:
     def process_message_with_rpg(self, data: bytes, client_id: str):
         """Procesa un mensaje recibido del cliente"""
         self.message_count += 1
-        
-        # Reenvío TCP de datos crudos (si está habilitado)
-        # Se hace al principio para asegurar que se reenvía tal cual llega
-        self.send_tcp_raw_data(data)
-        
+
         # Log del mensaje raw (formato compacto)
         hex_data = funciones.bytes2hexa(data)
         # No loggear verbose - solo guardar en log compacto
         print(f"📨 Msg #{self.message_count} de {client_id}")
         print(f"   Raw: {hex_data}")
+
+        # Reenvío TCP de datos crudos (si está habilitado) con exclusión por equipo
+        # Mantiene el payload idéntico; solo se saltea el transporte TCP para IDs excluidos.
+        full_id = ""
+        rpg_id = ""
+        if len(hex_data) >= 12:
+            candidate = hex_data[2:12]  # En TQ: 10 dígitos de ID completo
+            if candidate.isdigit() and len(candidate) == 10:
+                full_id = candidate
+                rpg_id = candidate[-5:]
+        self.send_tcp_raw_data(data, rpg_id, full_id)
         
         try:
             # ===================== F I L T R O   N M E A 0 1 8 3 ======================
@@ -924,6 +957,7 @@ class TQServerRPG:
             'udp_secondary_geo5_port': self.udp_secondary_geo5_port,
             'udp_secondary_geo5_hosts': list(self.udp_secondary_geo5_hosts),
             'udp_secondary_geo5_device_ids': sorted(self.udp_secondary_geo5_device_ids),
+            'tcp_forward_excluded_device_ids': sorted(self.tcp_forward_excluded_device_ids),
             'tcp_forward_enabled': self.tcp_forward_enabled,
             'tcp_forward_host': self.tcp_forward_host,
             'tcp_forward_port': self.tcp_forward_port,
