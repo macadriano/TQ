@@ -16,7 +16,7 @@ import requests
 import time
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
+from typing import Dict, FrozenSet, Optional, Tuple
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Importar las funciones y protocolos existentes
@@ -35,7 +35,11 @@ class TQServerRPG:
                  heartbeat_enabled: bool = True,
                  heartbeat_udp_host: str = '127.0.0.1',
                  heartbeat_udp_port: int = 9001,
-                 heartbeat_interval_seconds: int = 300):
+                 heartbeat_interval_seconds: int = 300,
+                 udp_secondary_geo5_enabled: bool = True,
+                 udp_secondary_geo5_port: int = 5031,
+                 udp_secondary_geo5_hosts: Optional[Tuple[str, ...]] = None,
+                 udp_secondary_geo5_device_ids: Optional[Tuple[str, ...]] = None):
         self.host = host
         self.port = port
         self.udp_host = udp_host
@@ -57,6 +61,19 @@ class TQServerRPG:
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.heartbeat_thread = None
         self.heartbeat_stop_event = None
+
+        # Reenvío UDP secundario GEO5 (mismo payload que el primario; solo equipos listados)
+        self.udp_secondary_geo5_enabled = udp_secondary_geo5_enabled
+        self.udp_secondary_geo5_port = udp_secondary_geo5_port
+        self.udp_secondary_geo5_hosts = (
+            udp_secondary_geo5_hosts
+            if udp_secondary_geo5_hosts is not None
+            else ('35.244.244.72', '168.197.48.154')
+        )
+        _sec_ids = udp_secondary_geo5_device_ids
+        if _sec_ids is None:
+            _sec_ids = ('95999', '87877')
+        self.udp_secondary_geo5_device_ids: FrozenSet[str] = frozenset(_sec_ids)
 
         self.server_socket = None
         self.health_server = None
@@ -445,6 +462,40 @@ class TQServerRPG:
             except Exception as e:
                 self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host_2}:{self.tcp_forward_port_2}: {e}")
 
+    def _device_id_matches_secondary_geo5_udp(self, rpg_device_id: str, full_device_id: str) -> bool:
+        """True si el equipo debe recibir también el reenvío UDP secundario GEO5."""
+        rpg = (rpg_device_id or '').strip()
+        full = (full_device_id or '').strip()
+        allowed = self.udp_secondary_geo5_device_ids
+        if rpg in allowed:
+            return True
+        if full in allowed:
+            return True
+        if len(full) >= 5 and full[-5:] in allowed:
+            return True
+        return False
+
+    def send_geo5_rpg_udp(self, rpg_message: str, rpg_device_id: str, full_device_id: str = '') -> None:
+        """
+        Envía GEO5/RPG por UDP al destino primario; luego, si aplica, a los hosts secundarios.
+        El primario siempre va primero y conserva el logging actual (enviar_mensaje_udp / guardarLog).
+        """
+        if not rpg_message:
+            return
+        funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+        if not self.udp_secondary_geo5_enabled:
+            return
+        if not self._device_id_matches_secondary_geo5_udp(rpg_device_id, full_device_id):
+            return
+        payload = rpg_message.encode('utf-8')
+        for host in self.udp_secondary_geo5_hosts:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.sendto(payload, (host, self.udp_secondary_geo5_port))
+            except Exception as e:
+                self.logger.error(
+                    f"Error reenvío UDP secundario GEO5 a {host}:{self.udp_secondary_geo5_port}: {e}"
+                )
 
     def process_message_with_rpg(self, data: bytes, client_id: str):
         """Procesa un mensaje recibido del cliente"""
@@ -507,8 +558,9 @@ class TQServerRPG:
                     rpg_message = protocolo.RGPdesdeCHINO(hex_data, self.terminal_id)
                     # No loggear verbose
                     
-                    # Reenviar por UDP
-                    funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                    # Reenviar por UDP (primario primero; secundario solo IDs configurados)
+                    full_id = hex_data[2:12] if len(hex_data) >= 12 else ''
+                    self.send_geo5_rpg_udp(rpg_message, self.terminal_id, full_id)
                     
                     # Log del mensaje RPG (ya no se usa log_rpg_message, usar funciones.guardarLogUDP)
                     print(f"🔄 Mensaje RPG enviado por UDP: {rpg_message}")
@@ -565,7 +617,8 @@ class TQServerRPG:
                             # Pasar también el hex_data para extraer el flag de ignición
                             rpg_message = self.create_rpg_message_from_gps(position_data, device_id, hex_data)
                             if rpg_message:
-                                funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                                full_id = position_data.get('device_id_completo', '') or ''
+                                self.send_geo5_rpg_udp(rpg_message, str(device_id), str(full_id))
                                 # Usar log optimizado en lugar de log_rpg_message
                                 funciones.guardarLogUDP(rpg_message)
                                 print(f"🔄 Mensaje RPG creado desde GPS enviado por UDP: {rpg_message}")
@@ -576,7 +629,8 @@ class TQServerRPG:
                             try:
                                 rpg_message = protocolo.RGPdesdePERSONAL(hex_data, self.terminal_id)
                                 if rpg_message:
-                                    funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                                    full_id_fb = hex_data[2:12] if len(hex_data) >= 12 else ''
+                                    self.send_geo5_rpg_udp(rpg_message, self.terminal_id, full_id_fb)
                                     funciones.guardarLogUDP(rpg_message)
                                     print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
                             except:
@@ -866,6 +920,10 @@ class TQServerRPG:
             'port': self.port,
             'udp_host': self.udp_host,
             'udp_port': self.udp_port,
+            'udp_secondary_geo5_enabled': self.udp_secondary_geo5_enabled,
+            'udp_secondary_geo5_port': self.udp_secondary_geo5_port,
+            'udp_secondary_geo5_hosts': list(self.udp_secondary_geo5_hosts),
+            'udp_secondary_geo5_device_ids': sorted(self.udp_secondary_geo5_device_ids),
             'tcp_forward_enabled': self.tcp_forward_enabled,
             'tcp_forward_host': self.tcp_forward_host,
             'tcp_forward_port': self.tcp_forward_port,
@@ -1142,7 +1200,13 @@ class TQServerRPG:
             
             self.logger.info(f"Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"🚀 Servidor TQ+RPG iniciado en {self.host}:{self.port}")
-            print(f"📡 UDP configurado para reenvío a {self.udp_host}:{self.udp_port}")
+            print(f"📡 UDP primario (GEO5) a {self.udp_host}:{self.udp_port}")
+            if self.udp_secondary_geo5_enabled:
+                sec_dests = ', '.join(
+                    f"{h}:{self.udp_secondary_geo5_port}" for h in self.udp_secondary_geo5_hosts
+                )
+                ids = ', '.join(sorted(self.udp_secondary_geo5_device_ids))
+                print(f"📡 UDP secundario GEO5 (IDs {ids}) → {sec_dests}")
             if self.tcp_forward_enabled or self.tcp_forward_enabled_2:
                 tcp_dests = []
                 if self.tcp_forward_enabled:
@@ -1577,6 +1641,9 @@ def main():
                     print(f"   Puerto TCP: {status['port']}")
                     print(f"   Host UDP: {status['udp_host']}")
                     print(f"   Puerto UDP: {status['udp_port']}")
+                    print(f"   UDP secundario GEO5: {status['udp_secondary_geo5_enabled']} "
+                          f"{status['udp_secondary_geo5_hosts']}:{status['udp_secondary_geo5_port']} "
+                          f"(IDs: {', '.join(status['udp_secondary_geo5_device_ids'])})")
                     print(f"   TerminalID: {status['terminal_id']}")
                     print(f"   Clientes conectados: {status['connected_clients']}")
                     print(f"   Mensajes totales: {status['total_messages']}")
