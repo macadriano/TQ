@@ -71,6 +71,12 @@ class TQServerRPG:
             if udp_secondary_geo5_hosts is not None
             else ('35.244.244.72', '168.197.48.154')
         )
+        # Puerto especial por host (secundario): solo aplica a IPs específicas.
+        # Requerimiento: 35.244.244.72 debe recibir GEO5 por UDP en 5006 (no 5031).
+        # El resto de IPs mantiene `udp_secondary_geo5_port`.
+        self.udp_secondary_geo5_port_overrides: Dict[str, int] = {
+            '35.244.244.72': 5006,
+        }
         _sec_ids = udp_secondary_geo5_device_ids
         if _sec_ids is None:
             _sec_ids = ('95999', '87877')
@@ -516,11 +522,12 @@ class TQServerRPG:
         payload = rpg_message.encode('utf-8')
         for host in self.udp_secondary_geo5_hosts:
             try:
+                port = self.udp_secondary_geo5_port_overrides.get(host, self.udp_secondary_geo5_port)
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.sendto(payload, (host, self.udp_secondary_geo5_port))
+                    sock.sendto(payload, (host, port))
             except Exception as e:
                 self.logger.error(
-                    f"Error reenvío UDP secundario GEO5 a {host}:{self.udp_secondary_geo5_port}: {e}"
+                    f"Error reenvío UDP secundario GEO5 a {host}:{port}: {e}"
                 )
 
     def process_message_with_rpg(self, data: bytes, client_id: str):
@@ -1237,7 +1244,8 @@ class TQServerRPG:
             print(f"📡 UDP primario (GEO5) a {self.udp_host}:{self.udp_port}")
             if self.udp_secondary_geo5_enabled:
                 sec_dests = ', '.join(
-                    f"{h}:{self.udp_secondary_geo5_port}" for h in self.udp_secondary_geo5_hosts
+                    f"{h}:{self.udp_secondary_geo5_port_overrides.get(h, self.udp_secondary_geo5_port)}"
+                    for h in self.udp_secondary_geo5_hosts
                 )
                 ids = ', '.join(sorted(self.udp_secondary_geo5_device_ids))
                 print(f"📡 UDP secundario GEO5 (IDs {ids}) → {sec_dests}")
