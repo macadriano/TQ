@@ -71,12 +71,9 @@ class TQServerRPG:
             if udp_secondary_geo5_hosts is not None
             else ('35.244.244.72', '168.197.48.154')
         )
-        # Puerto especial por host (secundario): solo aplica a IPs específicas.
-        # Requerimiento: 35.244.244.72 debe recibir GEO5 por UDP en 5006 (no 5031).
-        # El resto de IPs mantiene `udp_secondary_geo5_port`.
-        self.udp_secondary_geo5_port_overrides: Dict[str, int] = {
-            '35.244.244.72': 5006,
-        }
+        # Puerto especial por host (secundario): permite excepciones por IP.
+        # Por defecto, todos los hosts usan `udp_secondary_geo5_port`.
+        self.udp_secondary_geo5_port_overrides: Dict[str, int] = {}
         _sec_ids = udp_secondary_geo5_device_ids
         if _sec_ids is None:
             _sec_ids = ('95999', '87877')
@@ -474,9 +471,17 @@ class TQServerRPG:
         if self._device_id_is_tcp_forward_excluded(rpg_device_id, full_device_id):
             return
 
+        payload_hex = ""
+        try:
+            payload_hex = funciones.bytes2hexa(data)
+        except Exception:
+            payload_hex = ""
+        dev = (rpg_device_id or '').strip() or (full_device_id or '').strip()
+
         # Primer destino TCP
         if self.tcp_forward_enabled:
             try:
+                funciones.guardarLogPacket("->", "TCP", self.tcp_forward_host, self.tcp_forward_port, payload_hex, dev)
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.settimeout(2.0)
                     sock.connect((self.tcp_forward_host, self.tcp_forward_port))
@@ -487,6 +492,7 @@ class TQServerRPG:
         # Segundo destino TCP
         if self.tcp_forward_enabled_2:
             try:
+                funciones.guardarLogPacket("->", "TCP", self.tcp_forward_host_2, self.tcp_forward_port_2, payload_hex, dev)
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.settimeout(2.0)
                     sock.connect((self.tcp_forward_host_2, self.tcp_forward_port_2))
@@ -514,6 +520,8 @@ class TQServerRPG:
         """
         if not rpg_message:
             return
+        # Log + envío (una línea por destino)
+        funciones.guardarLogPacket("->", "UDP", self.udp_host, self.udp_port, rpg_message, (rpg_device_id or '').strip())
         funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
         if not self.udp_secondary_geo5_enabled:
             return
@@ -523,6 +531,7 @@ class TQServerRPG:
         for host in self.udp_secondary_geo5_hosts:
             try:
                 port = self.udp_secondary_geo5_port_overrides.get(host, self.udp_secondary_geo5_port)
+                funciones.guardarLogPacket("->", "UDP", host, port, rpg_message, (rpg_device_id or '').strip())
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                     sock.sendto(payload, (host, port))
             except Exception as e:
@@ -549,6 +558,13 @@ class TQServerRPG:
             if candidate.isdigit() and len(candidate) == 10:
                 full_id = candidate
                 rpg_id = candidate[-5:]
+
+        # Log paquete entrante (TCP) con metadatos si hay ID
+        try:
+            ip_in, port_in = client_id.split(":")
+        except Exception:
+            ip_in, port_in = client_id, ""
+        funciones.guardarLogPacket("<-", "TCP", ip_in, port_in, hex_data, rpg_id or full_id)
         self.send_tcp_raw_data(data, rpg_id, full_id)
         
         try:
@@ -562,10 +578,8 @@ class TQServerRPG:
             if text_data.startswith("*") and text_data.endswith("#"):
                 # Guardar en log específico si existe, o en el general con prefijo
                 try:
-                    if hasattr(funciones, "guardarLogNMEA") and callable(funciones.guardarLogNMEA):
-                        funciones.guardarLogNMEA(text_data)
-                    else:
-                        funciones.guardarLog(f"[NMEA0183] {text_data}")
+                    # Log NMEA entrante (TCP) con metadatos si hay ID
+                    funciones.guardarLogPacket("<-", "TCP", ip_in, port_in, text_data, rpg_id or full_id)
                 except Exception as e_log:
                     pass  # Error silencioso - ya se guardó en log
                 
@@ -576,8 +590,7 @@ class TQServerRPG:
                 return
             # ==========================================================================
 
-            # Guardar el mensaje en el log (formato compacto)
-            funciones.guardarLog(hex_data)
+            # Ya se guardó el paquete entrante con guardarLogPacket()
             
             # Detectar el tipo de protocolo
             protocol_type = protocolo.getPROTOCOL(hex_data)
@@ -606,7 +619,7 @@ class TQServerRPG:
                     print(f"🔄 Mensaje RPG enviado por UDP: {rpg_message}")
                     
                     # Guardar en el log UDP (formato compacto)
-                    funciones.guardarLogUDP(rpg_message)
+                    # El reenvío UDP ya se loguea por destino en send_geo5_rpg_udp()
                     
                 else:
                     # No loggear verbose - solo print
@@ -660,7 +673,7 @@ class TQServerRPG:
                                 full_id = position_data.get('device_id_completo', '') or ''
                                 self.send_geo5_rpg_udp(rpg_message, str(device_id), str(full_id))
                                 # Usar log optimizado en lugar de log_rpg_message
-                                funciones.guardarLogUDP(rpg_message)
+                                # El reenvío UDP ya se loguea por destino en send_geo5_rpg_udp()
                                 print(f"🔄 Mensaje RPG creado desde GPS enviado por UDP: {rpg_message}")
                         except Exception as e:
                             # Solo loggear errores críticos
@@ -671,7 +684,7 @@ class TQServerRPG:
                                 if rpg_message:
                                     full_id_fb = hex_data[2:12] if len(hex_data) >= 12 else ''
                                     self.send_geo5_rpg_udp(rpg_message, self.terminal_id, full_id_fb)
-                                    funciones.guardarLogUDP(rpg_message)
+                                    # El reenvío UDP ya se loguea por destino en send_geo5_rpg_udp()
                                     print(f"🔄 Mensaje RPG personal enviado por UDP: {rpg_message}")
                             except:
                                 pass  # No loggear warnings verbosos

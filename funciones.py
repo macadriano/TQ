@@ -84,6 +84,33 @@ def guardarLog(cadena):
     archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()
 
+def _format_packet_metadata(transport: str, ip: str = "", port: int | str = "", device_id: str = "") -> str:
+    t = (transport or "").strip()
+    ip_s = (ip or "").strip()
+    port_s = "" if port is None else str(port).strip()
+    dev = (device_id or "").strip()
+
+    parts = [p for p in (t, ip_s, port_s) if p]
+    if dev:
+        parts.append(dev)
+    return ", ".join(parts)
+
+def guardarLogPacket(direction: str, transport: str, ip: str, port, payload: str, device_id: str = ""):
+    """
+    Loggea un paquete con orientación y metadatos.
+    Formato:
+      DD/MM/YYYY H:M:S: <- [TCP,ip,port,ID] <payload>
+      DD/MM/YYYY H:M:S: -> [UDP,ip,port] <payload>
+    """
+    arrow = (direction or "").strip()
+    if arrow not in ("<-", "->"):
+        arrow = "->" if arrow else "->"
+    meta = _format_packet_metadata(transport, ip, port, device_id)
+    if meta:
+        guardarLog(f"{arrow} [{meta}] {payload}")
+    else:
+        guardarLog(f"{arrow} {payload}")
+
 def guardarLogArchivo(cadena, tag=""):
     """
     Guarda log en el archivo diario único con un tag opcional
@@ -131,13 +158,13 @@ def enviar_mensaje_udp(ip_destino, puerto_destino, mensaje):
         # Enviar el mensaje al destino
         sock.sendto(mensaje.encode(), (ip_destino, puerto_destino))
         print("Mensaje enviado correctamente.")
-        # guardando datos en archivo de LOG
-        guardarLog(getFechaHora() + " --> " + mensaje)
+        # Guardar en log diario único, con metadatos de destino (salida)
+        guardarLogPacket("->", "UDP", ip_destino, puerto_destino, mensaje)
 
     except Exception as e:
         print("Error al enviar el mensaje:", str(e))
         # guardando datos en archivo de LOG
-        guardarLog("Error al enviar el mensaje UDP:", str(e))
+        guardarLog(f"Error al enviar el mensaje UDP: {str(e)}")
     finally:
         # Cerrar el socket
         sock.close()
