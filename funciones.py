@@ -159,8 +159,7 @@ def enviar_mensaje_udp(ip_destino, puerto_destino, mensaje):
         # Enviar el mensaje al destino
         sock.sendto(mensaje.encode(), (ip_destino, puerto_destino))
         print("Mensaje enviado correctamente.")
-        # Guardar en log diario único, con metadatos de destino (salida)
-        guardarLogPacket("->", "UDP", ip_destino, puerto_destino, mensaje)
+        # Logging del paquete se realiza en el nivel que llama (para evitar duplicados)
 
     except Exception as e:
         print("Error al enviar el mensaje:", str(e))

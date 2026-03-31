@@ -339,6 +339,9 @@ class TQServerRPG:
     def save_position_to_file(self, position_data: Dict):
         """Guarda una posición en el archivo CSV aplicando filtros de calidad"""
         try:
+            # Esta instancia no usa archivo de posiciones; evitar errores en log.
+            if not hasattr(self, "positions_file"):
+                return
             device_id = position_data.get('device_id', '')
             latitude = position_data.get('latitude', 0.0)
             longitude = position_data.get('longitude', 0.0)
