@@ -6,6 +6,7 @@ import json
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+from typing import Union
 
 def bytes2hexa(valor_bytes):
 #valor_bytes = b'xx\r\x01\x08eF\x80P\x13\x82\x16\x00\xbe\xb9\xfa\r\n'  # Valor en bytes
@@ -84,7 +85,7 @@ def guardarLog(cadena):
     archivo.write(fechaHora + ": " + cadena + "\n")
     archivo.close()
 
-def _format_packet_metadata(transport: str, ip: str = "", port: int | str = "", device_id: str = "") -> str:
+def _format_packet_metadata(transport: str, ip: str = "", port: Union[int, str] = "", device_id: str = "") -> str:
     t = (transport or "").strip()
     ip_s = (ip or "").strip()
     port_s = "" if port is None else str(port).strip()
