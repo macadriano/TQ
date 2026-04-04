@@ -32,6 +32,9 @@ class TQServerRPG:
                  tcp_forward_enabled: bool = True,
                  tcp_forward_host_2: str = '34.95.221.179', tcp_forward_port_2: int = 5003,
                  tcp_forward_enabled_2: bool = True,
+                 # Tercer destino: TQ crudo por TCP (mismas exclusiones que 1 y 2).
+                 tcp_forward_host_3: str = '35.199.119.107', tcp_forward_port_3: int = 5103,
+                 tcp_forward_enabled_3: bool = True,
                  heartbeat_enabled: bool = True,
                  heartbeat_udp_host: str = '127.0.0.1',
                  heartbeat_udp_port: int = 9001,
@@ -54,6 +57,9 @@ class TQServerRPG:
         self.tcp_forward_host_2 = tcp_forward_host_2
         self.tcp_forward_port_2 = tcp_forward_port_2
         self.tcp_forward_enabled_2 = tcp_forward_enabled_2
+        self.tcp_forward_host_3 = tcp_forward_host_3
+        self.tcp_forward_port_3 = tcp_forward_port_3
+        self.tcp_forward_enabled_3 = tcp_forward_enabled_3
         
         # Configuración de heartbeat UDP
         self.heartbeat_enabled = heartbeat_enabled
@@ -69,11 +75,17 @@ class TQServerRPG:
         self.udp_secondary_geo5_hosts = (
             udp_secondary_geo5_hosts
             if udp_secondary_geo5_hosts is not None
-            else ('35.244.244.72', '168.197.48.154')
+            else (
+                '34.95.221.179',
+                '168.197.48.154',
+                '35.199.119.107',
+            )
         )
         # Puerto especial por host (secundario): permite excepciones por IP.
         # Por defecto, todos los hosts usan `udp_secondary_geo5_port`.
-        self.udp_secondary_geo5_port_overrides: Dict[str, int] = {}
+        self.udp_secondary_geo5_port_overrides: Dict[str, int] = {
+            '35.199.119.107': 5105,
+        }
         _sec_ids = udp_secondary_geo5_device_ids
         if _sec_ids is None:
             _sec_ids = ('95999', '87877')
@@ -433,6 +445,9 @@ class TQServerRPG:
             if tcp_sent and self.tcp_forward_enabled_2:
                 hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
                 destinations.append(("TCP", self.tcp_forward_host_2, self.tcp_forward_port_2, hex_data))
+            if tcp_sent and self.tcp_forward_enabled_3:
+                hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
+                destinations.append(("TCP", self.tcp_forward_host_3, self.tcp_forward_port_3, hex_data))
             
             # Usar el logger optimizado
             self.rpg_logger.log_rpg_attempt(
@@ -502,6 +517,16 @@ class TQServerRPG:
                     sock.sendall(data)
             except Exception as e:
                 self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host_2}:{self.tcp_forward_port_2}: {e}")
+
+        if self.tcp_forward_enabled_3:
+            try:
+                funciones.guardarLogPacket("->", "TCP", self.tcp_forward_host_3, self.tcp_forward_port_3, payload_hex, dev)
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(2.0)
+                    sock.connect((self.tcp_forward_host_3, self.tcp_forward_port_3))
+                    sock.sendall(data)
+            except Exception as e:
+                self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host_3}:{self.tcp_forward_port_3}: {e}")
 
     def _device_id_matches_secondary_geo5_udp(self, rpg_device_id: str, full_device_id: str) -> bool:
         """True si el equipo debe recibir también el reenvío UDP secundario GEO5."""
@@ -987,6 +1012,9 @@ class TQServerRPG:
             'tcp_forward_enabled_2': self.tcp_forward_enabled_2,
             'tcp_forward_host_2': self.tcp_forward_host_2,
             'tcp_forward_port_2': self.tcp_forward_port_2,
+            'tcp_forward_enabled_3': self.tcp_forward_enabled_3,
+            'tcp_forward_host_3': self.tcp_forward_host_3,
+            'tcp_forward_port_3': self.tcp_forward_port_3,
             'terminal_id': self.terminal_id,
             'connected_clients': len(self.clients),
             'total_messages': self.message_count,
@@ -1265,12 +1293,14 @@ class TQServerRPG:
                 )
                 ids = ', '.join(sorted(self.udp_secondary_geo5_device_ids))
                 print(f"📡 UDP secundario GEO5 (IDs {ids}) → {sec_dests}")
-            if self.tcp_forward_enabled or self.tcp_forward_enabled_2:
+            if self.tcp_forward_enabled or self.tcp_forward_enabled_2 or self.tcp_forward_enabled_3:
                 tcp_dests = []
                 if self.tcp_forward_enabled:
                     tcp_dests.append(f"{self.tcp_forward_host}:{self.tcp_forward_port}")
                 if self.tcp_forward_enabled_2:
                     tcp_dests.append(f"{self.tcp_forward_host_2}:{self.tcp_forward_port_2}")
+                if self.tcp_forward_enabled_3:
+                    tcp_dests.append(f"{self.tcp_forward_host_3}:{self.tcp_forward_port_3}")
                 print(f"📤 TCP reenvío paquete original a: {', '.join(tcp_dests)}")
             print("📡 Esperando conexiones de equipos...")
             
