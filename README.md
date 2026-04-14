@@ -155,11 +155,10 @@ Ver [README_LOGS.md](README_LOGS.md) para más detalles.
 - **Protocolo**: UDP
 - **Función**: Reenvía mensajes RPG al servidor destino
 
-### Puerto TCP (Salida - Reenvío)
-- **Host**: 200.58.98.187
-- **Puerto**: 5003
-- **Protocolo**: TCP
-- **Función**: Reenvía datos crudos (raw bytes) tal cual se reciben
+### Reenvíos (configurables por archivo)
+
+Los reenvíos (incluyendo TQ crudo por TCP/UDP y GEO5 por UDP/TCP por equipo) se configuran en `REENVIOS_CONFIG.txt`.
+Ver `README_REENVIOS.md`.
 
 
 ### Modificar Configuración
@@ -172,9 +171,7 @@ server = TQServerRPG(
     port=5003,                    # Puerto TCP de entrada
     udp_host='179.43.115.190',   # IP del servidor UDP destino
     udp_port=7007,                # Puerto UDP destino
-    tcp_forward_host='200.58.98.187', # IP destino reenvío TCP
-    tcp_forward_port=5003,        # Puerto destino reenvío TCP
-    tcp_forward_enabled=True      # Habilitar/Deshabilitar reenvío TCP
+    reenvios_config_path='REENVIOS_CONFIG.txt'  # Archivo de reglas de reenvío
 )
 
 ```

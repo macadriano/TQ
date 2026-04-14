@@ -16,50 +16,34 @@ import requests
 import time
 import json
 from datetime import datetime, timedelta
-from typing import Dict, FrozenSet, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Importar las funciones y protocolos existentes
 import funciones
 import protocolo
 from log_optimizer import get_rpg_logger
+from reenvios_config import (
+    ForwardingRule,
+    append_reenvio_log,
+    load_reenvios_config,
+)
 
 class TQServerRPG:
     def __init__(self, host: str = '0.0.0.0', port: int = 5003, 
                  udp_host: str = '179.43.115.190', udp_port: int = 7007,
                  health_port: int = 5004,
-                 tcp_forward_host: str = '168.197.48.154', tcp_forward_port: int = 5005,
-                 tcp_forward_enabled: bool = True,
-                 tcp_forward_host_2: str = '34.95.221.179', tcp_forward_port_2: int = 5003,
-                 tcp_forward_enabled_2: bool = True,
-                 # Tercer destino: TQ crudo por TCP (mismas exclusiones que 1 y 2).
-                 tcp_forward_host_3: str = '35.199.119.107', tcp_forward_port_3: int = 5103,
-                 tcp_forward_enabled_3: bool = True,
                  heartbeat_enabled: bool = True,
                  heartbeat_udp_host: str = '127.0.0.1',
                  heartbeat_udp_port: int = 9001,
                  heartbeat_interval_seconds: int = 300,
-                 udp_secondary_geo5_enabled: bool = True,
-                 udp_secondary_geo5_port: int = 5031,
-                 udp_secondary_geo5_hosts: Optional[Tuple[str, ...]] = None,
-                 udp_secondary_geo5_device_ids: Optional[Tuple[str, ...]] = None,
-                 tcp_forward_excluded_device_ids: Optional[Tuple[str, ...]] = None):
+                 reenvios_reload_interval_seconds: int = 60,
+                 reenvios_config_path: Optional[str] = None):
         self.host = host
         self.port = port
         self.udp_host = udp_host
         self.udp_port = udp_port
         self.health_port = health_port
-        
-        # Configuración de reenvío TCP
-        self.tcp_forward_host = tcp_forward_host
-        self.tcp_forward_port = tcp_forward_port
-        self.tcp_forward_enabled = tcp_forward_enabled
-        self.tcp_forward_host_2 = tcp_forward_host_2
-        self.tcp_forward_port_2 = tcp_forward_port_2
-        self.tcp_forward_enabled_2 = tcp_forward_enabled_2
-        self.tcp_forward_host_3 = tcp_forward_host_3
-        self.tcp_forward_port_3 = tcp_forward_port_3
-        self.tcp_forward_enabled_3 = tcp_forward_enabled_3
         
         # Configuración de heartbeat UDP
         self.heartbeat_enabled = heartbeat_enabled
@@ -68,34 +52,23 @@ class TQServerRPG:
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.heartbeat_thread = None
         self.heartbeat_stop_event = None
+        self.reenvios_reload_interval_seconds = int(reenvios_reload_interval_seconds)
+        self.reenvios_reload_thread = None
+        self.reenvios_reload_stop_event = None
+        self._reenvios_lock = threading.RLock()
+        self._reenvios_last_mtime: Optional[float] = None
 
-        # Reenvío UDP secundario GEO5 (mismo payload que el primario; solo equipos listados)
-        self.udp_secondary_geo5_enabled = udp_secondary_geo5_enabled
-        self.udp_secondary_geo5_port = udp_secondary_geo5_port
-        self.udp_secondary_geo5_hosts = (
-            udp_secondary_geo5_hosts
-            if udp_secondary_geo5_hosts is not None
-            else (
-                '34.95.221.179',
-                '168.197.48.154',
-                '35.199.119.107',
-            )
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.reenvios_config_path = (
+            reenvios_config_path
+            if reenvios_config_path is not None
+            else os.path.join(base_dir, "REENVIOS_CONFIG.txt")
         )
-        # Puerto especial por host (secundario): permite excepciones por IP.
-        # Por defecto, todos los hosts usan `udp_secondary_geo5_port`.
-        self.udp_secondary_geo5_port_overrides: Dict[str, int] = {
-            '35.199.119.107': 5105,
-        }
-        _sec_ids = udp_secondary_geo5_device_ids
-        if _sec_ids is None:
-            _sec_ids = ('95999', '87877')
-        self.udp_secondary_geo5_device_ids: FrozenSet[str] = frozenset(_sec_ids)
-
-        # Exclusiones de reenvío TCP (raw): permite validar que updates vienen por UDP
-        _tcp_excl = tcp_forward_excluded_device_ids
-        if _tcp_excl is None:
-            _tcp_excl = ('95999', '87877')
-        self.tcp_forward_excluded_device_ids: FrozenSet[str] = frozenset(_tcp_excl)
+        self._reenvios_by_device, _reenvios_warn = load_reenvios_config(self.reenvios_config_path)
+        try:
+            self._reenvios_last_mtime = os.path.getmtime(self.reenvios_config_path)
+        except Exception:
+            self._reenvios_last_mtime = None
 
         self.server_socket = None
         self.health_server = None
@@ -122,6 +95,8 @@ class TQServerRPG:
         
         # Configurar logging
         self.setup_logging()
+        for w in _reenvios_warn:
+            self.logger.warning(w)
         
         # No necesitamos archivos separados, todo va al log diario único
 
@@ -433,21 +408,19 @@ class TQServerRPG:
             
             # Preparar lista de destinos
             destinations = []
-            
-            # Destino UDP si hay mensaje RPG
-            if rpg_message:
+            rid = str(position_data.get('device_id', '') or '')
+            fid = str(position_data.get('device_id_completo', '') or '')
+            dev5 = self._equipo_5_digitos(rid, fid)
+            rules = self._reenvios_rules_for(dev5)
+            has_servicio = any(r.tipo == "SERVICIO" for r in rules)
+
+            if rpg_message and not has_servicio:
                 destinations.append(("UDP", self.udp_host, self.udp_port, rpg_message))
-            
-            # Destino TCP si está habilitado
-            if tcp_sent and self.tcp_forward_enabled:
-                hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
-                destinations.append(("TCP", self.tcp_forward_host, self.tcp_forward_port, hex_data))
-            if tcp_sent and self.tcp_forward_enabled_2:
-                hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
-                destinations.append(("TCP", self.tcp_forward_host_2, self.tcp_forward_port_2, hex_data))
-            if tcp_sent and self.tcp_forward_enabled_3:
-                hex_data = funciones.bytes2hexa(position_data.get('raw_data', b''))
-                destinations.append(("TCP", self.tcp_forward_host_3, self.tcp_forward_port_3, hex_data))
+            for rule in rules:
+                if rule.protocolo_gps != "GEO5" or not rpg_message:
+                    continue
+                kind = "UDP" if rule.transporte == "UDP" else "TCP"
+                destinations.append((kind, rule.ip, rule.port, rpg_message))
             
             # Usar el logger optimizado
             self.rpg_logger.log_rpg_attempt(
@@ -465,107 +438,187 @@ class TQServerRPG:
         except Exception as e:
             self.logger.error(f"Error en log RPG optimizado: {e}")
 
+    @staticmethod
+    def _equipo_5_digitos(rpg_device_id: str, full_device_id: str = "") -> str:
+        r = (rpg_device_id or "").strip()
+        if r.isdigit() and len(r) == 5:
+            return r
+        f = (full_device_id or "").strip()
+        if f.isdigit() and len(f) >= 5:
+            return f[-5:]
+        return ""
 
-    def _device_id_is_tcp_forward_excluded(self, rpg_device_id: str, full_device_id: str) -> bool:
-        """
-        True si el equipo NO debe reenviarse por TCP (raw).
-        Acepta ID RPG (5 dígitos) y/o ID completo (10 dígitos); compara contra la lista configurada.
-        """
-        rpg = (rpg_device_id or '').strip()
-        full = (full_device_id or '').strip()
-        excluded = self.tcp_forward_excluded_device_ids
-        if rpg and rpg in excluded:
-            return True
-        if full and full in excluded:
-            return True
-        if len(full) >= 5 and full[-5:] in excluded:
-            return True
-        return False
+    def _reenvios_rules_for(self, equipo_5: str) -> List[ForwardingRule]:
+        if not equipo_5:
+            return []
+        with self._reenvios_lock:
+            rules = self._reenvios_by_device.get(equipo_5, [])
+            return list(rules)
 
-    def send_tcp_raw_data(self, data: bytes, rpg_device_id: str = "", full_device_id: str = ""):
+    def reload_reenvios_config_if_changed(self, force: bool = False) -> bool:
         """
-        Reenvía los datos crudos por TCP a las IP y puertos configurados
+        Recarga `REENVIOS_CONFIG.txt` si cambió en disco (mtime) o si force=True.
+        Devuelve True si se recargó (y se reemplazaron reglas en memoria).
         """
-        if self._device_id_is_tcp_forward_excluded(rpg_device_id, full_device_id):
+        try:
+            mtime = os.path.getmtime(self.reenvios_config_path)
+        except Exception:
+            mtime = None
+
+        if not force and mtime is not None and self._reenvios_last_mtime is not None:
+            if mtime <= self._reenvios_last_mtime:
+                return False
+
+        by_device, warnings = load_reenvios_config(self.reenvios_config_path)
+
+        # Modo HA: si el archivo no se puede leer (falta/IO), NO pisar reglas vigentes.
+        fatal_markers = ("Reenvíos: error leyendo", "Reenvíos: no se encontró el archivo")
+        fatal = any((w or "").startswith(fatal_markers) for w in warnings)
+        if fatal:
+            for w in warnings:
+                self.logger.warning(w)
+            self.logger.warning(
+                "Reenvíos: se mantiene la configuración anterior (archivo no legible)."
+            )
+            return False
+
+        with self._reenvios_lock:
+            self._reenvios_by_device = by_device
+            self._reenvios_last_mtime = mtime
+
+        for w in warnings:
+            self.logger.warning(w)
+        self.logger.info(
+            f"Reenvíos: reglas recargadas ({sum(len(v) for v in by_device.values())} reglas, "
+            f"{len(by_device)} equipos) desde {self.reenvios_config_path}"
+        )
+        return True
+
+    def reenvios_reload_loop(self) -> None:
+        """Bucle que recarga reglas periódicamente."""
+        while not self.reenvios_reload_stop_event.is_set():
+            if self.running:
+                try:
+                    self.reload_reenvios_config_if_changed(force=False)
+                except Exception as e:
+                    self.logger.error(f"Reenvíos: error recargando configuración: {e}")
+            if self.reenvios_reload_stop_event.wait(self.reenvios_reload_interval_seconds):
+                break
+
+    def start_reenvios_reload(self) -> None:
+        """Inicia el thread de recarga automática del archivo de reenvíos."""
+        if self.reenvios_reload_interval_seconds <= 0:
             return
+        self.reenvios_reload_stop_event = threading.Event()
+        self.reenvios_reload_thread = threading.Thread(target=self.reenvios_reload_loop)
+        self.reenvios_reload_thread.daemon = True
+        self.reenvios_reload_thread.start()
+        self.logger.info(
+            f"Reenvíos: recarga automática cada {self.reenvios_reload_interval_seconds}s "
+            f"({self.reenvios_config_path})"
+        )
 
-        payload_hex = ""
+    def stop_reenvios_reload(self) -> None:
+        """Detiene el thread de recarga automática del archivo de reenvíos."""
+        if self.reenvios_reload_stop_event:
+            self.reenvios_reload_stop_event.set()
+        if self.reenvios_reload_thread and self.reenvios_reload_thread.is_alive():
+            self.reenvios_reload_thread.join(timeout=2.0)
+
+    def apply_reenvios_tq_csv(self, data: bytes, rpg_device_id: str, full_device_id: str = "") -> None:
+        """Reglas CSV con PROTOCOLO_GPS=TQ (UDP o TCP), mismo payload crudo que llegó por TCP."""
+        dev5 = self._equipo_5_digitos(rpg_device_id, full_device_id)
+        if not dev5:
+            return
         try:
             payload_hex = funciones.bytes2hexa(data)
         except Exception:
             payload_hex = ""
-        dev = (rpg_device_id or '').strip() or (full_device_id or '').strip()
-
-        # Primer destino TCP
-        if self.tcp_forward_enabled:
+        for rule in self._reenvios_rules_for(dev5):
+            if rule.protocolo_gps != "TQ":
+                continue
             try:
-                funciones.guardarLogPacket("->", "TCP", self.tcp_forward_host, self.tcp_forward_port, payload_hex, dev)
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(2.0)
-                    sock.connect((self.tcp_forward_host, self.tcp_forward_port))
-                    sock.sendall(data)
+                if rule.transporte == "UDP":
+                    funciones.guardarLogPacket("->", "UDP", rule.ip, rule.port, payload_hex, dev5)
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                        sock.sendto(data, (rule.ip, rule.port))
+                else:
+                    funciones.guardarLogPacket("->", "TCP", rule.ip, rule.port, payload_hex, dev5)
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                        sock.settimeout(2.0)
+                        sock.connect((rule.ip, rule.port))
+                        sock.sendall(data)
+                append_reenvio_log(
+                    dev5,
+                    rule.tipo,
+                    rule.ip,
+                    rule.port,
+                    rule.transporte,
+                    rule.protocolo_gps,
+                    rule.cliente,
+                    payload_hex,
+                )
             except Exception as e:
-                self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host}:{self.tcp_forward_port}: {e}")
+                self.logger.error(f"Error reenvío CSV TQ ({rule.transporte}) a {rule.ip}:{rule.port}: {e}")
 
-        # Segundo destino TCP
-        if self.tcp_forward_enabled_2:
-            try:
-                funciones.guardarLogPacket("->", "TCP", self.tcp_forward_host_2, self.tcp_forward_port_2, payload_hex, dev)
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(2.0)
-                    sock.connect((self.tcp_forward_host_2, self.tcp_forward_port_2))
-                    sock.sendall(data)
-            except Exception as e:
-                self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host_2}:{self.tcp_forward_port_2}: {e}")
-
-        if self.tcp_forward_enabled_3:
-            try:
-                funciones.guardarLogPacket("->", "TCP", self.tcp_forward_host_3, self.tcp_forward_port_3, payload_hex, dev)
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(2.0)
-                    sock.connect((self.tcp_forward_host_3, self.tcp_forward_port_3))
-                    sock.sendall(data)
-            except Exception as e:
-                self.logger.error(f"Error reenviando datos por TCP a {self.tcp_forward_host_3}:{self.tcp_forward_port_3}: {e}")
-
-    def _device_id_matches_secondary_geo5_udp(self, rpg_device_id: str, full_device_id: str) -> bool:
-        """True si el equipo debe recibir también el reenvío UDP secundario GEO5."""
-        rpg = (rpg_device_id or '').strip()
-        full = (full_device_id or '').strip()
-        allowed = self.udp_secondary_geo5_device_ids
-        if rpg in allowed:
-            return True
-        if full in allowed:
-            return True
-        if len(full) >= 5 and full[-5:] in allowed:
-            return True
-        return False
-
-    def send_geo5_rpg_udp(self, rpg_message: str, rpg_device_id: str, full_device_id: str = '') -> None:
+    def send_geo5_rpg_udp(self, rpg_message: str, rpg_device_id: str, full_device_id: str = "") -> None:
         """
-        Envía GEO5/RPG por UDP al destino primario; luego, si aplica, a los hosts secundarios.
-        El primario siempre va primero y conserva el logging actual (enviar_mensaje_udp / guardarLog).
+        Destino UDP general GEO5 (179.43.115.190:7007) salvo que exista regla SERVICIO para el equipo;
+        luego aplica todas las filas CSV para ese EQUIPO (GEO5 por UDP o TCP).
         """
         if not rpg_message:
             return
-        # Log + envío (una línea por destino)
-        funciones.guardarLogPacket("->", "UDP", self.udp_host, self.udp_port, rpg_message, (rpg_device_id or '').strip())
-        funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
-        if not self.udp_secondary_geo5_enabled:
-            return
-        if not self._device_id_matches_secondary_geo5_udp(rpg_device_id, full_device_id):
-            return
-        payload = rpg_message.encode('utf-8')
-        for host in self.udp_secondary_geo5_hosts:
+        dev5 = self._equipo_5_digitos(rpg_device_id, full_device_id)
+        dev_log = dev5 or (rpg_device_id or "").strip()
+        rules = self._reenvios_rules_for(dev5)
+        has_servicio = any(r.tipo == "SERVICIO" for r in rules)
+
+        if not has_servicio:
             try:
-                port = self.udp_secondary_geo5_port_overrides.get(host, self.udp_secondary_geo5_port)
-                funciones.guardarLogPacket("->", "UDP", host, port, rpg_message, (rpg_device_id or '').strip())
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.sendto(payload, (host, port))
-            except Exception as e:
-                self.logger.error(
-                    f"Error reenvío UDP secundario GEO5 a {host}:{port}: {e}"
+                funciones.guardarLogPacket(
+                    "->", "UDP", self.udp_host, self.udp_port, rpg_message, dev_log
                 )
+                funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                append_reenvio_log(
+                    dev_log,
+                    "GENERAL",
+                    self.udp_host,
+                    self.udp_port,
+                    "UDP",
+                    "GEO5",
+                    "",
+                    rpg_message,
+                )
+            except Exception as e:
+                self.logger.error(f"Error enviando GEO5 UDP general a {self.udp_host}:{self.udp_port}: {e}")
+
+        payload_b = rpg_message.encode("utf-8")
+        for rule in rules:
+            if rule.protocolo_gps != "GEO5":
+                continue
+            try:
+                if rule.transporte == "UDP":
+                    funciones.guardarLogPacket("->", "UDP", rule.ip, rule.port, rpg_message, dev_log)
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                        sock.sendto(payload_b, (rule.ip, rule.port))
+                else:
+                    funciones.guardarLogPacket("->", "TCP", rule.ip, rule.port, rpg_message, dev_log)
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                        sock.settimeout(2.0)
+                        sock.connect((rule.ip, rule.port))
+                        sock.sendall(payload_b)
+                append_reenvio_log(
+                    dev_log,
+                    rule.tipo,
+                    rule.ip,
+                    rule.port,
+                    rule.transporte,
+                    rule.protocolo_gps,
+                    rule.cliente,
+                    rpg_message,
+                )
+            except Exception as e:
+                self.logger.error(f"Error reenvío CSV GEO5 ({rule.transporte}) a {rule.ip}:{rule.port}: {e}")
 
     def process_message_with_rpg(self, data: bytes, client_id: str):
         """Procesa un mensaje recibido del cliente"""
@@ -593,7 +646,7 @@ class TQServerRPG:
         except Exception:
             ip_in, port_in = client_id, ""
         funciones.guardarLogPacket("<-", "TCP", ip_in, port_in, hex_data, rpg_id or full_id)
-        self.send_tcp_raw_data(data, rpg_id, full_id)
+        self.apply_reenvios_tq_csv(data, rpg_id, full_id)
         
         try:
             # ===================== F I L T R O   N M E A 0 1 8 3 ======================
@@ -1001,20 +1054,9 @@ class TQServerRPG:
             'port': self.port,
             'udp_host': self.udp_host,
             'udp_port': self.udp_port,
-            'udp_secondary_geo5_enabled': self.udp_secondary_geo5_enabled,
-            'udp_secondary_geo5_port': self.udp_secondary_geo5_port,
-            'udp_secondary_geo5_hosts': list(self.udp_secondary_geo5_hosts),
-            'udp_secondary_geo5_device_ids': sorted(self.udp_secondary_geo5_device_ids),
-            'tcp_forward_excluded_device_ids': sorted(self.tcp_forward_excluded_device_ids),
-            'tcp_forward_enabled': self.tcp_forward_enabled,
-            'tcp_forward_host': self.tcp_forward_host,
-            'tcp_forward_port': self.tcp_forward_port,
-            'tcp_forward_enabled_2': self.tcp_forward_enabled_2,
-            'tcp_forward_host_2': self.tcp_forward_host_2,
-            'tcp_forward_port_2': self.tcp_forward_port_2,
-            'tcp_forward_enabled_3': self.tcp_forward_enabled_3,
-            'tcp_forward_host_3': self.tcp_forward_host_3,
-            'tcp_forward_port_3': self.tcp_forward_port_3,
+            'reenvios_config_path': self.reenvios_config_path,
+            'reenvios_equipos_configurados': sorted(self._reenvios_by_device.keys()),
+            'reenvios_total_reglas': sum(len(v) for v in self._reenvios_by_device.values()),
             'terminal_id': self.terminal_id,
             'connected_clients': len(self.clients),
             'total_messages': self.message_count,
@@ -1265,6 +1307,9 @@ class TQServerRPG:
             
             # Iniciar thread de limpieza de conexiones inactivas
             self.start_connection_cleanup()
+
+            # Iniciar recarga automática de reglas de reenvío
+            self.start_reenvios_reload()
             
             # Limpiar logs antiguos (mantener solo últimos 30 días)
             print("🧹 Limpiando logs antiguos...")
@@ -1286,22 +1331,11 @@ class TQServerRPG:
             self.logger.info(f"Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"🚀 Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"📡 UDP primario (GEO5) a {self.udp_host}:{self.udp_port}")
-            if self.udp_secondary_geo5_enabled:
-                sec_dests = ', '.join(
-                    f"{h}:{self.udp_secondary_geo5_port_overrides.get(h, self.udp_secondary_geo5_port)}"
-                    for h in self.udp_secondary_geo5_hosts
-                )
-                ids = ', '.join(sorted(self.udp_secondary_geo5_device_ids))
-                print(f"📡 UDP secundario GEO5 (IDs {ids}) → {sec_dests}")
-            if self.tcp_forward_enabled or self.tcp_forward_enabled_2 or self.tcp_forward_enabled_3:
-                tcp_dests = []
-                if self.tcp_forward_enabled:
-                    tcp_dests.append(f"{self.tcp_forward_host}:{self.tcp_forward_port}")
-                if self.tcp_forward_enabled_2:
-                    tcp_dests.append(f"{self.tcp_forward_host_2}:{self.tcp_forward_port_2}")
-                if self.tcp_forward_enabled_3:
-                    tcp_dests.append(f"{self.tcp_forward_host_3}:{self.tcp_forward_port_3}")
-                print(f"📤 TCP reenvío paquete original a: {', '.join(tcp_dests)}")
+            n_rules = sum(len(v) for v in self._reenvios_by_device.values())
+            print(
+                f"📡 Reenvíos CSV: {self.reenvios_config_path} ({n_rules} reglas, "
+                f"{len(self._reenvios_by_device)} equipos)"
+            )
             print("📡 Esperando conexiones de equipos...")
             
             while self.running:
@@ -1382,6 +1416,9 @@ class TQServerRPG:
         
         # Detener heartbeat
         self.stop_heartbeat()
+
+        # Detener recarga de reenvíos
+        self.stop_reenvios_reload()
         
         # Detener limpieza de conexiones
         self.stop_connection_cleanup()
@@ -1729,9 +1766,9 @@ def main():
                     print(f"   Puerto TCP: {status['port']}")
                     print(f"   Host UDP: {status['udp_host']}")
                     print(f"   Puerto UDP: {status['udp_port']}")
-                    print(f"   UDP secundario GEO5: {status['udp_secondary_geo5_enabled']} "
-                          f"{status['udp_secondary_geo5_hosts']}:{status['udp_secondary_geo5_port']} "
-                          f"(IDs: {', '.join(status['udp_secondary_geo5_device_ids'])})")
+                    print(f"   Reenvíos CSV: {status['reenvios_config_path']}")
+                    eq = ", ".join(status["reenvios_equipos_configurados"]) or "ninguno"
+                    print(f"   Reglas reenvío: {status['reenvios_total_reglas']} (equipos: {eq})")
                     print(f"   TerminalID: {status['terminal_id']}")
                     print(f"   Clientes conectados: {status['connected_clients']}")
                     print(f"   Mensajes totales: {status['total_messages']}")

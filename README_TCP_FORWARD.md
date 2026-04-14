@@ -1,34 +1,21 @@
-# Documentación de Reenvío TCP (Raw Data)
+## Reenvío TCP (TQ crudo) vía reglas CSV
 
-Este documento detalla la funcionalidad de reenvío de datos crudos (Raw Data) vía TCP implementada en el servidor TQ+RPG.
+La funcionalidad de reenvío del **payload crudo (TQ)** ya no se configura con parámetros `tcp_forward_*` en `tq_server_rpg.py`.
+Ahora se controla **exclusivamente** desde `REENVIOS_CONFIG.txt` (ver `README_REENVIOS.md`).
 
-## 📋 Descripción
+### Descripción
 
-El servidor tiene la capacidad de reenviar **exactamente los mismos bytes que recibe** de los dispositivos GPS a un servidor secundario vía TCP. Esta funcionalidad opera en paralelo al procesamiento principal (conversión a RPG y reenvío UDP) y está diseñada para ser no bloqueante y segura.
+Para reenviar el TQ crudo:
+- Use `PROTOCOLO_GPS=TQ` y `TRANSPORTE=TCP` (o `UDP`) en el CSV.
+- El payload enviado es **exactamente** el mismo `bytes` recibido por TCP desde el equipo.
 
-### Detalles del Destino
-- **IP Destino**: `200.58.98.187`
-- **Puerto Destino**: `5003`
-- **Protocolo**: TCP
-- **Formato de Datos**: Bytes crudos (sin procesar, tal cual se reciben del dispositivo)
+### Ejemplo CSV
 
-## ⚙️ Configuración
-
-La funcionalidad es modular y se configura en la inicialización de la clase `TQServerRPG` en el archivo `tq_server_rpg.py`.
-
-### Parámetros
-
-```python
-server = TQServerRPG(
-    # ... otros parámetros ...
-    tcp_forward_host='200.58.98.187',  # IP del servidor destino
-    tcp_forward_port=5003,             # Puerto del servidor destino
-    tcp_forward_enabled=True           # Activar (True) o Desactivar (False)
-)
+```csv
+TIPO, CLIENTE, EQUIPO, TRANSPORTE, PROTOCOLO_GPS, IP, PUERTO
+CLONAR, TEST, 26501, TCP, TQ, 34.95.221.179, 5003
+CLONAR, TEST, 26501, TCP, TQ, 35.199.119.107, 5103
 ```
-
-### Cómo Desactivar
-Para desactivar esta funcionalidad sin borrar código, simplemente cambie el parámetro `tcp_forward_enabled` a `False` en la instanciación del servidor al final del archivo `tq_server_rpg.py`.
 
 ## 🛡️ Seguridad y Performance
 
@@ -40,25 +27,10 @@ Esta funcionalidad ha sido diseñada para ser **crítica-safe**, asegurando que 
 
 ## 📝 Logging
 
-El sistema registra la actividad de este módulo en el log diario unificado (`logs/LOG_DDMMYY.txt`):
-
-- **Éxito**: `Datos reenviados por TCP a 200.58.98.187:5003`
-- **Error**: `Error reenviando datos por TCP a ...: [Detalle del error]`
+- Cada reenvío por regla queda registrado en `logs/Reenvios_YYYYMMDD.log`.
+- Además, el tráfico se registra con `guardarLogPacket` en el log diario unificado (`logs/LOG_DDMMYY.txt`).
+- En `Reenvios_YYYYMMDD.log` se incluye el campo `payload=` (hex para `TQ`, texto para `GEO5`), truncado si es muy largo.
 
 ## 🔍 Verificación
 
-Puede verificar si la funcionalidad está activa ejecutando el script de estado:
-
-```bash
-./server_status_rpg.sh
-```
-
-La salida incluirá una sección indicando el estado del reenvío TCP:
-
-```
-...
-tcp_forward_enabled: True
-tcp_forward_host: 200.58.98.187
-tcp_forward_port: 5003
-...
-```
+Use el comando interactivo `status` y revise la sección de “Reenvíos CSV” (cantidad de reglas y equipos). Luego verifique en `logs/Reenvios_YYYYMMDD.log` que se estén generando líneas con `formato=TQ` y `transporte=TCP`.
