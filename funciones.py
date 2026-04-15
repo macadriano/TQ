@@ -96,6 +96,17 @@ def _format_packet_metadata(transport: str, ip: str = "", port: Union[int, str] 
         parts.append(dev)
     return ", ".join(parts)
 
+def _truncate_payload(payload: str, max_len: int) -> str:
+    p = "" if payload is None else str(payload)
+    if max_len <= 0:
+        return ""
+    if len(p) <= max_len:
+        return p
+    # Mostrar inicio + fin (útil para hex largos)
+    head = max_len // 2
+    tail = max_len - head
+    return f"{p[:head]}...(trunc)...{p[-tail:]}"
+
 def guardarLogPacket(direction: str, transport: str, ip: str, port, payload: str, device_id: str = ""):
     """
     Loggea un paquete con orientación y metadatos.
@@ -107,6 +118,14 @@ def guardarLogPacket(direction: str, transport: str, ip: str, port, payload: str
     if arrow not in ("<-", "->"):
         arrow = "->" if arrow else "->"
     meta = _format_packet_metadata(transport, ip, port, device_id)
+    # Evitar logs gigantes por payloads crudos: truncar salvo que se pida explícitamente.
+    full = os.getenv("LOG_PACKET_PAYLOAD_FULL", "").strip() in ("1", "true", "TRUE", "yes", "YES")
+    if not full:
+        try:
+            max_len = int(os.getenv("LOG_PACKET_PAYLOAD_MAX", "200").strip() or "200")
+        except Exception:
+            max_len = 200
+        payload = _truncate_payload(payload, max_len)
     if meta:
         guardarLog(f"{arrow} [{meta}] {payload}")
     else:

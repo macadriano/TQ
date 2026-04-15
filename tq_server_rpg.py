@@ -448,6 +448,43 @@ class TQServerRPG:
             return f[-5:]
         return ""
 
+    @staticmethod
+    def _geo5_id_suffix_from_orig(full_device_id: str, rpg_device_id: str, suffix_len: int) -> str:
+        """Últimos `suffix_len` caracteres del ID de origen (TQ); fallback al ID RPG si no hay completo."""
+        orig = (full_device_id or rpg_device_id or "").strip()
+        if not orig or suffix_len <= 0:
+            return ""
+        if len(orig) >= suffix_len:
+            return orig[-suffix_len:]
+        return orig
+
+    @staticmethod
+    def _geo5_replace_id_and_recompute_checksum(message: str, new_id_value: str) -> Optional[str]:
+        """
+        Sustituye el valor en ;ID=...;# y recalcula el checksum GEO5 (XOR hasta '*' inclusive).
+        Devuelve None si el texto no tiene el formato esperado.
+        """
+        if not message or new_id_value is None:
+            return None
+        tok = ";ID="
+        t = message.find(tok)
+        if t < 0:
+            return None
+        id_start = t + len(tok)
+        h = message.find(";#", id_start)
+        if h < 0:
+            return None
+        star = message.rfind("*", id_start)
+        if star < 0 or star <= h:
+            return None
+        if not message.endswith("<") or star >= len(message) - 1:
+            return None
+        head = message[:id_start]
+        mid_with_star = message[h : star + 1]
+        prefix_for_xor = head + str(new_id_value) + mid_with_star
+        cs = protocolo.sacar_checksum(prefix_for_xor)
+        return prefix_for_xor + cs + "<"
+
     def _reenvios_rules_for(self, equipo_5: str) -> List[ForwardingRule]:
         if not equipo_5:
             return []
@@ -586,19 +623,38 @@ class TQServerRPG:
                     self.udp_port,
                     "UDP",
                     "GEO5",
-                    "",
+                    "GENERAL",
                     rpg_message,
                 )
             except Exception as e:
                 self.logger.error(f"Error enviando GEO5 UDP general a {self.udp_host}:{self.udp_port}: {e}")
 
-        payload_b = rpg_message.encode("utf-8")
         for rule in rules:
             if rule.protocolo_gps != "GEO5":
                 continue
+            payload_str = rpg_message
+            if rule.transporte == "UDP" and rule.formato_id is not None:
+                new_id = self._geo5_id_suffix_from_orig(
+                    full_device_id, rpg_device_id, rule.formato_id
+                )
+                if new_id:
+                    adjusted = self._geo5_replace_id_and_recompute_checksum(rpg_message, new_id)
+                    if adjusted:
+                        payload_str = adjusted
+                    else:
+                        self.logger.warning(
+                            "Reenvíos UDP GEO5: no se pudo ajustar ID/checksum "
+                            f"(equipo {dev_log}, línea CSV {rule.line_no}); se envía mensaje sin cambiar ID."
+                        )
+                else:
+                    self.logger.warning(
+                        "Reenvíos UDP GEO5: FORMATO_ID definido pero ID de origen vacío "
+                        f"(equipo {dev_log}, línea {rule.line_no}); se envía mensaje sin cambiar ID."
+                    )
+            payload_b = payload_str.encode("utf-8")
             try:
                 if rule.transporte == "UDP":
-                    funciones.guardarLogPacket("->", "UDP", rule.ip, rule.port, rpg_message, dev_log)
+                    funciones.guardarLogPacket("->", "UDP", rule.ip, rule.port, payload_str, dev_log)
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                         sock.sendto(payload_b, (rule.ip, rule.port))
                 else:
@@ -615,7 +671,7 @@ class TQServerRPG:
                     rule.transporte,
                     rule.protocolo_gps,
                     rule.cliente,
-                    rpg_message,
+                    payload_str,
                 )
             except Exception as e:
                 self.logger.error(f"Error reenvío CSV GEO5 ({rule.transporte}) a {rule.ip}:{rule.port}: {e}")
@@ -657,12 +713,13 @@ class TQServerRPG:
                 text_data = ""
             
             if text_data.startswith("*") and text_data.endswith("#"):
-                # Guardar en log específico si existe, o en el general con prefijo
-                try:
-                    # Log NMEA entrante (TCP) con metadatos si hay ID
-                    funciones.guardarLogPacket("<-", "TCP", ip_in, port_in, text_data, rpg_id or full_id)
-                except Exception as e_log:
-                    pass  # Error silencioso - ya se guardó en log
+                # Evitar duplicados ruidosos: si es HQ (ya se loguea el hex crudo), no volver a loguear el texto.
+                if not text_data.startswith("*HQ,"):
+                    try:
+                        # Log NMEA entrante (TCP) con metadatos si hay ID
+                        funciones.guardarLogPacket("<-", "TCP", ip_in, port_in, text_data, rpg_id or full_id)
+                    except Exception:
+                        pass  # Error silencioso - ya se guardó en log
                 
                 # No loggear verbose - ya se guardó con guardarLogNMEA
                 print(f"⛔ NMEA0183 filtrado: {text_data}")

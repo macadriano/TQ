@@ -9,6 +9,9 @@ logs/
 *.log
 *.txt
 *.csv
+*.ver
+LOG_*.txt*
+*.log
 
 # Excepciones: permitir archivos de documentación
 !README*.md

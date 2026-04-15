@@ -34,6 +34,7 @@ Ruta por defecto del CSV: directorio del script `tq_server_rpg.py` + `REENVIOS_C
 | `PROTOCOLO_GPS` | `GEO5` o `GEO` (equivalente a GEO5) para mensaje ya convertido a RPG/GEO5; `TQ` para **payload crudo** igual al recibido por TCP. |
 | `IP` | IPv4 válida. |
 | `PUERTO` | Entero entre 1 y 65535. |
+| `FORMATO_ID` (opcional, 8.ª columna) | Solo aplica a reenvíos **UDP** con `PROTOCOLO_GPS` **GEO5** (o `GEO`). Si la columna **no existe** o la celda está **vacía**, el mensaje GEO5 se reenvía tal cual (ID con los **últimos 5** caracteres del ID de origen TQ, igual que siempre). Si contiene un entero **N** entre 1 y 32, para ese destino UDP se reconstruye el campo `ID=...` usando los **últimos N caracteres** del ID de origen (TQ) y se **recalcula el checksum**. No afecta al envío al **destino general** UDP ni a reenvíos **TCP** GEO5. |
 
 Filas incompletas, IP o puerto inválidos, `TIPO`/`TRANSPORTE`/`PROTOCOLO_GPS` desconocidos generan **avisos en el log del servidor** y esa fila se **ignora**; el proceso no se detiene.
 
@@ -80,7 +81,7 @@ Para un mensaje con un `EQUIPO` dado, se buscan **todas** las filas cuyo `EQUIPO
 
 - Un archivo **por día** (fecha del calendario local del servidor).
 - Formato: campos separados por tabulador, una línea por envío registrado desde el motor de reenvíos.
-- Campos habituales: timestamp, `device_id`, `tipo` (`GENERAL`, `SERVICIO`, `CLONAR`), `destino=IP:puerto`, `transporte`, `formato` (p. ej. `GEO5`, `TQ`), `payload` (truncado si es muy largo), y opcionalmente `cliente`.
+- Campos habituales: timestamp, `device_id`, `tipo` (`GENERAL`, `SERVICIO`, `CLONAR`), `destino=IP:puerto`, `transporte`, `formato` (p. ej. `GEO5`, `TQ`), `cliente` (siempre presente: `GENERAL`, valor del CSV, o `-`), y `payload` (truncado si es muy largo).
 
 El log general de aplicación (`logs/LOG_*.txt`) y `guardarLogPacket` siguen usándose como antes para tráfico; `Reenvios_*.log` centraliza la trazabilidad del **motor de reglas**.
 

@@ -8,7 +8,7 @@ import ipaddress
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,9 @@ class ForwardingRule:
     ip: str
     port: int
     line_no: int
+    # Opcional columna CSV FORMATO_ID: para reenvío UDP GEO5, cantidad de caracteres finales
+    # del ID de origen (TQ) en ID=... (None = mensaje sin retocar, últimos 5 como hoy).
+    formato_id: Optional[int] = None
 
 
 def _ensure_logs_dir() -> None:
@@ -51,6 +54,7 @@ def append_reenvio_log(
         p = (payload or "").replace("\r", "\\r").replace("\n", "\\n")
         if len(p) > 800:
             p = p[:800] + "...(trunc)"
+        c = (cliente or "").strip() or "-"
         parts = [
             ts,
             f"device_id={device_id}",
@@ -58,9 +62,8 @@ def append_reenvio_log(
             f"destino={dest}",
             f"transporte={transporte}",
             f"formato={formato}",
+            f"cliente={c}",
         ]
-        if cliente:
-            parts.append(f"cliente={cliente}")
         if p:
             parts.append(f"payload={p}")
         line = "\t".join(parts) + "\n"
@@ -115,10 +118,26 @@ def load_reenvios_config(path: str) -> Tuple[Dict[str, List[ForwardingRule]], Li
                 if line_no == 1 and row[0].upper() == "TIPO":
                     continue
                 if len(row) < 7:
-                    warnings.append(f"Reenvíos línea {line_no}: se esperan 7 columnas, hay {len(row)}.")
+                    warnings.append(f"Reenvíos línea {line_no}: se esperan al menos 7 columnas, hay {len(row)}.")
                     continue
 
                 tipo, cliente, equipo, transporte, proto_gps, ip_s, port_s = row[:7]
+                formato_raw = row[7].strip() if len(row) > 7 else ""
+                formato_id: Optional[int] = None
+                if formato_raw:
+                    try:
+                        n = int(formato_raw)
+                    except ValueError:
+                        warnings.append(
+                            f"Reenvíos línea {line_no}: FORMATO_ID no numérico {formato_raw!r}; se ignora."
+                        )
+                    else:
+                        if 1 <= n <= 32:
+                            formato_id = n
+                        else:
+                            warnings.append(
+                                f"Reenvíos línea {line_no}: FORMATO_ID fuera de rango (1-32): {n}; se ignora."
+                            )
                 tipo_u = tipo.upper()
                 if tipo_u not in ("SERVICIO", "CLONAR"):
                     warnings.append(f"Reenvíos línea {line_no}: TIPO inválido {tipo!r}.")
@@ -161,6 +180,7 @@ def load_reenvios_config(path: str) -> Tuple[Dict[str, List[ForwardingRule]], Li
                     ip=ip_s.strip(),
                     port=port,
                     line_no=line_no,
+                    formato_id=formato_id,
                 )
                 by_equipo.setdefault(eq, []).append(rule)
     except Exception as e:
