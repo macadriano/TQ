@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
+import html
 import hmac
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional, Tuple
 
 from flask import Flask, Response, abort, redirect, request, send_file, url_for
 
@@ -138,6 +139,32 @@ def _tail_lines_text(path: Path, lines: int) -> str:
     return "\n".join(tail)
 
 
+def _device_filter_needle(raw: str) -> Optional[str]:
+    """
+    Construye la subcadena a buscar en cada línea para filtrar por equipo.
+
+    - Si el usuario ingresa solo dígitos (ej. 95989), se busca ``device_id=95989``
+      (formato habitual en ``Reenvios_*.log``).
+    - En cualquier otro caso se usa el texto tal cual (trim), útil para patrones
+      personalizados o IDs en otros formatos.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if re.fullmatch(r"\d+", s):
+        return f"device_id={s}"
+    return s
+
+
+def _filter_lines_by_needle(text: str, needle: str) -> Tuple[str, int, int]:
+    """Devuelve (texto_filtrado, líneas_matched, líneas_totales_en_tail)."""
+    lines = text.split("\n")
+    total = len(lines)
+    n = needle.lower()
+    kept = [ln for ln in lines if n in ln.lower()]
+    return "\n".join(kept), len(kept), total
+
+
 def _html_page(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="es">
@@ -235,13 +262,33 @@ def view_log(name: str) -> Response:
     except ValueError:
         n = 400
     n = max(1, min(n, MAX_TAIL_LINES))
+    device_raw = (request.args.get("device") or "").strip()
+    needle = _device_filter_needle(device_raw)
+
     text = _tail_lines_text(p, n)
+    total_in_tail = len(text.split("\n")) if text else 0
+    matched = total_in_tail
+    if needle:
+        text, matched, total_in_tail = _filter_lines_by_needle(text, needle)
+
     safe_name = p.name
+    dev_attr = html.escape(device_raw, quote=True)
+    lines_attr = html.escape(str(n), quote=True)
+    filter_note = ""
+    if needle:
+        filter_note = (
+            f"<div class='muted' style='margin-top:6px;'>"
+            f"Filtro equipo: <code>{_escape_html(needle)}</code> · "
+            f"<b>{matched}</b> líneas coinciden (sobre <b>{total_in_tail}</b> en el bloque mostrado)."
+            f"</div>"
+        )
+
     body = f"""
   <div class="row" style="margin-bottom: 10px;">
     <div style="font-weight: 700;"><code>{safe_name}</code></div>
-    <div class="muted">Mostrando últimas <b>{n}</b> líneas</div>
+    <div class="muted">Base: últimas <b>{n}</b> líneas del archivo{'; luego filtro por equipo' if needle else ''}</div>
   </div>
+  {filter_note}
   <div class="row" style="margin-bottom: 10px;">
     <a href="{url_for('logs')}">← volver</a>
     <span class="muted">·</span>
@@ -249,9 +296,12 @@ def view_log(name: str) -> Response:
   </div>
   <div class="row" style="margin-bottom: 10px;">
     <form method="get" action="{url_for('view_log', name=safe_name)}" class="row">
-      <input name="lines" value="{n}" style="width: 120px;" />
+      <label class="muted">Líneas</label>
+      <input name="lines" value="{lines_attr}" style="width: 120px;" />
+      <label class="muted">Equipo</label>
+      <input name="device" placeholder="ej. 95999" value="{dev_attr}" style="width: 140px;" />
       <button type="submit">Aplicar</button>
-      <span class="muted">máx {MAX_TAIL_LINES}</span>
+      <span class="muted">máx {MAX_TAIL_LINES} líneas · si Equipo son solo dígitos se busca <code>device_id=…</code></span>
     </form>
   </div>
   <pre>{_escape_html(text)}</pre>

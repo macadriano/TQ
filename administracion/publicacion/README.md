@@ -2,6 +2,8 @@
 
 Módulo web mínimo para **listar / ver / descargar** archivos dentro de `./logs/` del proyecto.
 
+Documentación detallada: [DOCUMENTACION.md](DOCUMENTACION.md).
+
 ## Ubicación
 
 `administracion/publicacion/`
@@ -45,4 +47,5 @@ HTTP Basic Auth hardcodeado en `administracion/publicacion/app.py`:
 
 - Solo lee archivos con extensiones `.log` y `.txt`.
 - La vista muestra por defecto las **últimas 400 líneas**, configurable con `?lines=...` (máximo 20000).
+- En la vista de un archivo, el campo **Equipo** (query `device`) filtra líneas: si son solo dígitos se busca `device_id=<número>`; si no, se usa el texto como subcadena (sin distinguir mayúsculas).
 
