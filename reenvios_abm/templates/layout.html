@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title or "Reenvíos ABM" }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+    <style>
+      :root { --pico-font-size: 95%; }
+      .muted { opacity: 0.75; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .wrap { word-break: break-word; }
+      .flash { margin: 0.75rem 0; padding: 0.75rem; border-radius: 8px; }
+      .flash.success { background: #e6ffed; border: 1px solid #b7ebc6; color: #1a7f37; }
+      .flash.error { background: #ffebe9; border: 1px solid #ffcecb; color: #cf222e; }
+      .flash.warning { background: #fff8c5; border: 1px solid #f2e088; color: #6e4b00; }
+      .table-scroll { overflow-x: auto; }
+      .row-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      .small { font-size: 0.9rem; }
+
+      /* Header / nav */
+      nav.topnav { align-items: center; gap: 0.75rem; justify-content: space-between; }
+      nav.topnav > ul { flex: 0 0 auto; }
+      .nav-links { display: flex; gap: 1rem; align-items: center; }
+      .nav-mobile { display: none; margin: 0; }
+      .nav-dropdown { margin: 0; }
+      .nav-dropdown summary { cursor: pointer; }
+      .nav-dropdown ul { margin: 0.5rem 0 0 0; padding-left: 0; }
+      .nav-dropdown li { list-style: none; margin: 0.25rem 0; }
+
+      /* Responsive tables: turn rows into cards on small screens */
+      @media (max-width: 640px) {
+        .table-scroll { overflow-x: visible; }
+        table.responsive thead { display: none; }
+        table.responsive,
+        table.responsive tbody,
+        table.responsive tr,
+        table.responsive td {
+          display: block;
+          width: 100%;
+        }
+        table.responsive tr {
+          border: 1px solid var(--pico-muted-border-color);
+          border-radius: 10px;
+          padding: 0.5rem 0.75rem;
+          margin: 0.75rem 0;
+          background: var(--pico-background-color);
+        }
+        table.responsive td {
+          border: none;
+          padding: 0.35rem 0;
+          display: flex;
+          justify-content: space-between;
+          gap: 0.75rem;
+          align-items: baseline;
+        }
+        table.responsive td::before {
+          content: attr(data-label);
+          font-weight: 600;
+          opacity: 0.85;
+          flex: 0 0 auto;
+          max-width: 45%;
+        }
+        table.responsive td > * { max-width: 55%; }
+        table.responsive td.actions {
+          justify-content: flex-start;
+        }
+        table.responsive td.actions::before { content: ""; }
+
+        /* Mobile nav: show dropdown, hide inline links */
+        nav.topnav { flex-wrap: wrap; }
+        .nav-links { display: none; }
+        .nav-mobile { display: flex; margin-left: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="container">
+      <nav class="topnav">
+        <ul style="margin: 0;">
+          <li><strong>Reenvíos ABM</strong></li>
+        </ul>
+
+        <ul class="nav-links" style="margin: 0;">
+          <li><a href="{{ url_for('rules_list') }}">Reglas</a></li>
+          <li><a href="{{ url_for('equipos_list') }}">Equipos</a></li>
+          <li><a href="{{ url_for('clientes_list') }}">Clientes</a></li>
+        </ul>
+
+        <ul class="nav-mobile" style="margin: 0;">
+          <li>
+            <details class="nav-dropdown">
+              <summary>Menú</summary>
+              <ul>
+                <li><a href="{{ url_for('rules_list') }}">Reglas</a></li>
+                <li><a href="{{ url_for('equipos_list') }}">Equipos</a></li>
+                <li><a href="{{ url_for('clientes_list') }}">Clientes</a></li>
+              </ul>
+            </details>
+          </li>
+        </ul>
+      </nav>
+      <p class="muted small wrap">
+        Archivo: <span class="mono">{{ config_path }}</span>
+      </p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </header>
+
+    <main class="container">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="container muted small" style="margin-top: 2rem;">
+      <p>Uso local. Para exponer en red, agregá auth fuerte y HTTPS por proxy.</p>
+    </footer>
+  </body>
+</html>
+

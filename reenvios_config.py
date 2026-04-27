@@ -24,6 +24,8 @@ class ForwardingRule:
     # Opcional columna CSV FORMATO_ID: para reenvío UDP GEO5, cantidad de caracteres finales
     # del ID de origen (TQ) en ID=... (None = mensaje sin retocar, últimos 5 como hoy).
     formato_id: Optional[int] = None
+    # Opcional columna CSV FECHA_ALTA: DD/MM/YYYY (o YYYY-MM-DD, se normaliza a DD/MM/YYYY)
+    fecha_alta: Optional[str] = None
 
 
 def _ensure_logs_dir() -> None:
@@ -90,6 +92,19 @@ def _validate_ipv4(host: str) -> bool:
         return False
 
 
+def _normalize_fecha_alta(raw: str) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.strftime("%d/%m/%Y")
+        except Exception:
+            continue
+    return ""
+
+
 def load_reenvios_config(path: str) -> Tuple[Dict[str, List[ForwardingRule]], List[str]]:
     """
     Lee el CSV y devuelve (reglas_por_equipo_5dígitos, mensajes_de_advertencia).
@@ -123,6 +138,7 @@ def load_reenvios_config(path: str) -> Tuple[Dict[str, List[ForwardingRule]], Li
 
                 tipo, cliente, equipo, transporte, proto_gps, ip_s, port_s = row[:7]
                 formato_raw = row[7].strip() if len(row) > 7 else ""
+                fecha_raw = row[8].strip() if len(row) > 8 else ""
                 formato_id: Optional[int] = None
                 if formato_raw:
                     try:
@@ -171,6 +187,10 @@ def load_reenvios_config(path: str) -> Tuple[Dict[str, List[ForwardingRule]], Li
                     warnings.append(f"Reenvíos línea {line_no}: PUERTO fuera de rango {port}.")
                     continue
 
+                fecha_alta = _normalize_fecha_alta(fecha_raw)
+                if fecha_raw.strip() and not fecha_alta:
+                    warnings.append(f"Reenvíos línea {line_no}: FECHA_ALTA inválida {fecha_raw!r} (usar DD/MM/YYYY).")
+
                 rule = ForwardingRule(
                     tipo=tipo_u,
                     cliente=cliente.strip(),
@@ -181,6 +201,7 @@ def load_reenvios_config(path: str) -> Tuple[Dict[str, List[ForwardingRule]], Li
                     port=port,
                     line_no=line_no,
                     formato_id=formato_id,
+                    fecha_alta=(fecha_alta or None),
                 )
                 by_equipo.setdefault(eq, []).append(rule)
     except Exception as e:

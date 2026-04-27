@@ -1,0 +1,49 @@
+{% extends "layout.html" %}
+{% block content %}
+  <section>
+    <h2>Equipos</h2>
+    <p class="muted small" style="margin: 0.5rem 0 1rem 0;">
+      Total equipos: <strong>{{ total_equipos }}</strong> | Total reglas: <strong>{{ total_rules }}</strong>
+    </p>
+
+    {% if warnings %}
+      <details>
+        <summary>Advertencias de lectura ({{ warnings|length }})</summary>
+        <ul>
+          {% for w in warnings %}
+            <li class="wrap">{{ w }}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
+    <div class="table-scroll">
+      <table class="striped responsive">
+        <thead>
+          <tr>
+            <th>Equipo</th>
+            <th>Reglas</th>
+            <th>Fecha alta</th>
+            <th>Bloquea general</th>
+            <th>Clientes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in equipos %}
+            <tr>
+              <td class="mono" data-label="Equipo">{{ e.equipo }}</td>
+              <td class="mono" data-label="Reglas">{{ e.count }}</td>
+              <td class="mono" data-label="Fecha alta">{{ e.fecha_alta }}</td>
+              <td data-label="Bloquea general">{% if e.has_servicio %}Sí (tiene SERVICIO){% else %}No{% endif %}</td>
+              <td class="wrap" data-label="Clientes">{{ e.clientes|join(", ") }}</td>
+            </tr>
+          {% endfor %}
+          {% if equipos|length == 0 %}
+            <tr><td colspan="5" class="muted">Sin equipos con reglas.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
+

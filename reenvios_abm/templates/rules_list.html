@@ -1,0 +1,84 @@
+{% extends "layout.html" %}
+{% block content %}
+  <section>
+    <div class="row-actions" style="justify-content: space-between; align-items: center;">
+      <h2 style="margin: 0;">Reglas</h2>
+      <a role="button" href="{{ url_for('rules_new') }}">Nueva regla</a>
+    </div>
+    <p class="muted small" style="margin: 0.5rem 0 1rem 0;">
+      Total: <strong>{{ total_rules }}</strong>
+      {% if q %} | Mostradas: <strong>{{ shown_rules }}</strong>{% endif %}
+    </p>
+
+    {% if warnings %}
+      <details>
+        <summary>Advertencias de lectura ({{ warnings|length }})</summary>
+        <ul>
+          {% for w in warnings %}
+            <li class="wrap">{{ w }}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
+    <form method="get" action="{{ url_for('rules_list') }}">
+      <div class="grid">
+        <label>
+          Buscar (equipo/cliente/ip/etc)
+          <input name="q" value="{{ q }}" placeholder="ej. 26501 o 154.53.61.40 o TQ" />
+        </label>
+        <label class="muted">
+          &nbsp;
+          <button type="submit">Filtrar</button>
+        </label>
+      </div>
+    </form>
+
+    <div class="table-scroll">
+      <table class="striped responsive">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Equipo</th>
+            <th>Tipo</th>
+            <th>Cliente</th>
+            <th>Transporte</th>
+            <th>Protocolo</th>
+            <th>Destino</th>
+            <th>Formato ID</th>
+            <th>Fecha alta</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for idx, r in indexed_rules %}
+            <tr>
+              <td class="mono" data-label="#">{{ idx }}</td>
+              <td class="mono" data-label="Equipo">{{ r.equipo }}</td>
+              <td data-label="Tipo">{{ r.tipo }}</td>
+              <td class="wrap" data-label="Cliente">{{ r.cliente or "-" }}</td>
+              <td data-label="Transporte">{{ r.transporte }}</td>
+              <td data-label="Protocolo">{{ r.protocolo_gps }}</td>
+              <td class="mono" data-label="Destino">{{ r.ip }}:{{ r.port }}</td>
+              <td class="mono" data-label="Formato ID">{{ r.formato_id if r.formato_id is not none else "-" }}</td>
+              <td class="mono" data-label="Fecha alta">{{ r.fecha_alta if r.fecha_alta else "-" }}</td>
+              <td class="actions" data-label="Acciones">
+                <div class="row-actions">
+                  <a class="secondary" href="{{ url_for('rules_edit', idx=idx) }}">Editar</a>
+                  <form method="post" action="{{ url_for('rules_delete', idx=idx) }}" style="margin: 0;">
+                    <input type="hidden" name="config_mtime" value="{{ config_mtime }}" />
+                    <button class="contrast" type="submit" onclick="return confirm('¿Eliminar esta regla?');">Eliminar</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+          {% if indexed_rules|length == 0 %}
+            <tr><td colspan="10" class="muted">Sin reglas.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
+

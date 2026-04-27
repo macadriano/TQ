@@ -1,0 +1,89 @@
+{% extends "layout.html" %}
+{% block content %}
+  <section>
+    {% if mode == "new" %}
+      <h2>Nueva regla</h2>
+    {% else %}
+      <h2>Editar regla <span class="mono">#{{ idx }}</span></h2>
+    {% endif %}
+
+    <form method="post"
+      action="{% if mode == 'new' %}{{ url_for('rules_create') }}{% else %}{{ url_for('rules_update', idx=idx) }}{% endif %}">
+      <input type="hidden" name="config_mtime" value="{{ config_mtime }}" />
+
+      <div class="grid">
+        <label>
+          Tipo
+          <select name="tipo" required>
+            <option value="CLONAR" {% if form.tipo == "CLONAR" %}selected{% endif %}>CLONAR</option>
+            <option value="SERVICIO" {% if form.tipo == "SERVICIO" %}selected{% endif %}>SERVICIO</option>
+          </select>
+        </label>
+
+        <label>
+          Cliente
+          <input name="cliente" value="{{ form.cliente }}" placeholder="ej. TEST / ClienteX" />
+        </label>
+      </div>
+
+      <div class="grid">
+        <label>
+          Equipo (5 dígitos)
+          <input class="mono" name="equipo" value="{{ form.equipo }}" placeholder="26501" required />
+        </label>
+
+        <label>
+          Transporte
+          <select name="transporte" required>
+            <option value="UDP" {% if form.transporte == "UDP" %}selected{% endif %}>UDP</option>
+            <option value="TCP" {% if form.transporte == "TCP" %}selected{% endif %}>TCP</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grid">
+        <label>
+          Protocolo GPS
+          <select name="protocolo_gps" required>
+            <option value="GEO5" {% if form.protocolo_gps == "GEO5" %}selected{% endif %}>GEO5</option>
+            <option value="TQ" {% if form.protocolo_gps == "TQ" %}selected{% endif %}>TQ</option>
+          </select>
+        </label>
+
+        <label>
+          Formato ID (opcional)
+          <input class="mono" name="formato_id" value="{{ form.formato_id }}" placeholder="vacío o 1..32 (solo UDP+GEO5)" />
+        </label>
+      </div>
+
+      <div class="grid">
+        <label>
+          Fecha alta (opcional)
+          <input type="date" name="fecha_alta" value="{{ form.fecha_alta }}" />
+        </label>
+        <label class="muted">
+          &nbsp;
+          <input value="Se guarda como DD/MM/YYYY" disabled />
+        </label>
+      </div>
+
+      <div class="grid">
+        <label>
+          IP destino
+          <input class="mono" name="ip" value="{{ form.ip }}" placeholder="154.53.61.40" required />
+        </label>
+
+        <label>
+          Puerto destino
+          <input class="mono" name="puerto" value="{{ form.puerto }}" placeholder="2101" required />
+        </label>
+      </div>
+
+      <div class="row-actions" style="margin-top: 1rem;">
+        <button type="submit">{% if mode == "new" %}Crear{% else %}Guardar{% endif %}</button>
+        <a class="secondary" href="{{ url_for('rules_list') }}">Volver</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}
+
