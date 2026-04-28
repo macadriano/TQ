@@ -195,6 +195,11 @@ def _html_page(title: str, body: str) -> str:
     <div>
       <div style="font-weight: 700;">TQ · Publicación de Logs</div>
       <div class="muted">Carpeta: <code>{LOGS_DIR}</code></div>
+      <div class="row" style="margin-top: 6px;">
+        <a href="{url_for('logs')}">Logs</a>
+        <span class="muted">·</span>
+        <a href="/admin/">Admin reenvíos</a>
+      </div>
     </div>
     <div class="muted">Servidor: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
   </div>
