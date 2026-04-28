@@ -277,14 +277,15 @@ def login_submit() -> Response:
     if not _creds_ok(user, pw):
         return redirect(url_for("login_form", msg="Usuario o contraseña incorrectos.", next=nxt))
     resp = redirect(nxt)
-    resp.set_cookie(AUTH_COOKIE, _make_auth_cookie(), httponly=True, samesite="Lax")
+    # Importante: Path=/ para que aplique a /logs y /admin (si no, queda en loop de redirects).
+    resp.set_cookie(AUTH_COOKIE, _make_auth_cookie(), httponly=True, samesite="Lax", path="/")
     return resp
 
 
 @app.get("/logout")
 def logout() -> Response:
     resp = redirect(url_for("login_form", msg="Sesión cerrada."))
-    resp.delete_cookie(AUTH_COOKIE)
+    resp.delete_cookie(AUTH_COOKIE, path="/")
     return resp
 
 
