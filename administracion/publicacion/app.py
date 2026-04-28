@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from flask import Flask, Response, abort, redirect, request, send_file, url_for
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 
 # =========================
@@ -34,6 +35,7 @@ ALLOWED_EXTS = {".log", ".txt"}
 
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("TQ_WEB_SECRET", "dev-secret-change-me")
 
 
 @dataclass(frozen=True)
@@ -333,4 +335,36 @@ if __name__ == "__main__":
     host = os.environ.get("TQ_LOGVIEW_HOST", "0.0.0.0")
     port = int(os.environ.get("TQ_LOGVIEW_PORT", "8088"))
     app.run(host=host, port=port, debug=False)
+
+
+# =========================
+# App unificada (logs + ABM)
+# =========================
+
+try:
+    from reenvios_abm.app import app as reenvios_abm_app  # type: ignore
+
+    # Compartir secret para sesiones/flash.
+    reenvios_abm_app.secret_key = app.secret_key
+
+    class _BasicAuthMiddleware:
+        def __init__(self, wsgi_app):
+            self.wsgi_app = wsgi_app
+
+        def __call__(self, environ, start_response):
+            path = (environ.get("PATH_INFO") or "").strip() or "/"
+            # permitir health sin auth, tanto en raíz como bajo /admin
+            if path in ("/health", "/admin/health"):
+                return self.wsgi_app(environ, start_response)
+            auth = environ.get("HTTP_AUTHORIZATION")
+            if _basic_auth_ok(auth):
+                return self.wsgi_app(environ, start_response)
+            res = _unauthorized()
+            return res(environ, start_response)
+
+    # Montar ABM bajo /admin (en esta misma app/puerto)
+    application = _BasicAuthMiddleware(DispatcherMiddleware(app, {"/admin": reenvios_abm_app}))
+except Exception:
+    # Si falla el import en algún entorno, dejamos la app de logs funcionando.
+    application = app
 

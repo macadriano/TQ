@@ -27,12 +27,13 @@ python administracion/publicacion/app.py
 ### Opción B (mejor para exponer, Windows/Linux): waitress
 
 ```bash
-python -m waitress --listen=0.0.0.0:8088 administracion.publicacion.app:app
+python -m waitress --listen=0.0.0.0:8088 administracion.publicacion.app:application
 ```
 
 Luego abrir:
 
 - `http://<tu-host>:8088/logs`
+- `http://<tu-host>:8088/admin` (ABM Reenvíos; misma autenticación)
 
 ## Autenticación
 
