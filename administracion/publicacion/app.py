@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import base64
 import html
 import hmac
 import os
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import quote
 
 from flask import Flask, Response, abort, redirect, request, send_file, url_for
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
@@ -47,38 +48,60 @@ class LogFile:
 
 
 def _unauthorized() -> Response:
-    return Response(
-        "Unauthorized",
-        401,
-        {"WWW-Authenticate": 'Basic realm="TQ Logs"'},
-    )
+    return Response("Unauthorized", 401, {"Content-Type": "text/plain; charset=utf-8"})
 
 
-def _basic_auth_ok(auth_header: str | None) -> bool:
-    if not auth_header:
+def _creds_ok(user: str, pw: str) -> bool:
+    # Comparación en tiempo constante (mínima higiene)
+    return hmac.compare_digest((user or "").strip(), ADMIN_USER) and hmac.compare_digest((pw or "").strip(), ADMIN_PASS)
+
+AUTH_COOKIE = "TQ_WEB_AUTH"
+
+
+def _cookie_sign(data: str) -> str:
+    key = (app.secret_key or "") + "|" + ADMIN_PASS
+    return hmac.new(key.encode("utf-8"), data.encode("utf-8"), digestmod="sha256").hexdigest()
+
+
+def _make_auth_cookie() -> str:
+    ts = str(int(datetime.utcnow().timestamp()))
+    nonce = secrets.token_urlsafe(16)
+    data = f"{ADMIN_USER}|{ts}|{nonce}"
+    return f"{data}|{_cookie_sign(data)}"
+
+
+def _auth_cookie_ok(raw: str | None) -> bool:
+    if not raw:
         return False
-    m = re.match(r"^Basic\s+(.+)$", auth_header.strip(), flags=re.IGNORECASE)
-    if not m:
+    parts = raw.split("|")
+    if len(parts) != 4:
         return False
+    user, ts, nonce, sig = parts
+    data = f"{user}|{ts}|{nonce}"
+    if not hmac.compare_digest(sig, _cookie_sign(data)):
+        return False
+    if not hmac.compare_digest(user, ADMIN_USER):
+        return False
+    # TTL simple (24hs)
     try:
-        raw = base64.b64decode(m.group(1)).decode("utf-8", errors="strict")
+        age = int(datetime.utcnow().timestamp()) - int(ts)
     except Exception:
         return False
-    if ":" not in raw:
-        return False
-    user, pw = raw.split(":", 1)
-    # Comparación en tiempo constante (mínima higiene)
-    return hmac.compare_digest(user, ADMIN_USER) and hmac.compare_digest(pw, ADMIN_PASS)
+    return 0 <= age <= 60 * 60 * 24
 
 
 @app.before_request
 def _require_auth() -> Optional[Response]:
-    # Si querés excluir healthcheck, agregalo acá.
-    if request.path == "/health":
+    # Health y login sin auth
+    if request.path in ("/health", "/login"):
         return None
-    if _basic_auth_ok(request.headers.get("Authorization")):
+    if request.path.startswith("/login"):
         return None
-    return _unauthorized()
+    raw = request.cookies.get(AUTH_COOKIE)
+    if _auth_cookie_ok(raw):
+        return None
+    nxt = request.full_path if request.query_string else request.path
+    return redirect(url_for("login_form", next=nxt))
 
 
 def _is_allowed_file(p: Path) -> bool:
@@ -199,6 +222,8 @@ def _html_page(title: str, body: str) -> str:
         <a href="{url_for('logs')}">Logs</a>
         <span class="muted">·</span>
         <a href="/admin/">Admin reenvíos</a>
+        <span class="muted">·</span>
+        <a href="{url_for('logout')}">Cerrar sesión</a>
       </div>
     </div>
     <div class="muted">Servidor: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
@@ -216,6 +241,51 @@ def index() -> Response:
 @app.get("/health")
 def health() -> Response:
     return Response("ok", 200, {"Content-Type": "text/plain; charset=utf-8"})
+
+
+@app.get("/login")
+def login_form() -> Response:
+    msg = (request.args.get("msg") or "").strip()
+    nxt = (request.args.get("next") or "").strip() or "/logs"
+    safe_msg = _escape_html(msg) if msg else ""
+    nxt_attr = html.escape(nxt, quote=True)
+    body = f"""
+  <h2>Ingreso</h2>
+  <p class="muted">Acceso a visor de logs y administración de reenvíos.</p>
+  {f"<div style='color:#b91c1c; margin: 10px 0;'><b>{safe_msg}</b></div>" if safe_msg else ""}
+  <form method="post" action="{url_for('login_submit')}" class="row" style="align-items: flex-end;">
+    <input type="hidden" name="next" value="{nxt_attr}" />
+    <div>
+      <div class="muted" style="margin-bottom:4px;">Usuario</div>
+      <input name="user" autocomplete="username" />
+    </div>
+    <div>
+      <div class="muted" style="margin-bottom:4px;">Contraseña</div>
+      <input name="pass" type="password" autocomplete="current-password" />
+    </div>
+    <button type="submit">Entrar</button>
+  </form>
+"""
+    return Response(_html_page("Login", body), mimetype="text/html; charset=utf-8")
+
+
+@app.post("/login")
+def login_submit() -> Response:
+    user = (request.form.get("user") or "").strip()
+    pw = (request.form.get("pass") or "").strip()
+    nxt = (request.form.get("next") or "").strip() or "/logs"
+    if not _creds_ok(user, pw):
+        return redirect(url_for("login_form", msg="Usuario o contraseña incorrectos.", next=nxt))
+    resp = redirect(nxt)
+    resp.set_cookie(AUTH_COOKIE, _make_auth_cookie(), httponly=True, samesite="Lax")
+    return resp
+
+
+@app.get("/logout")
+def logout() -> Response:
+    resp = redirect(url_for("login_form", msg="Sesión cerrada."))
+    resp.delete_cookie(AUTH_COOKIE)
+    return resp
 
 
 @app.get("/logs")
@@ -352,23 +422,28 @@ try:
     # Compartir secret para sesiones/flash.
     reenvios_abm_app.secret_key = app.secret_key
 
-    class _BasicAuthMiddleware:
+    class _CookieAuthMiddleware:
         def __init__(self, wsgi_app):
             self.wsgi_app = wsgi_app
 
         def __call__(self, environ, start_response):
             path = (environ.get("PATH_INFO") or "").strip() or "/"
-            # permitir health sin auth, tanto en raíz como bajo /admin
-            if path in ("/health", "/admin/health"):
+            # permitir health y login sin auth
+            if path in ("/health", "/admin/health", "/login") or path.startswith("/login"):
                 return self.wsgi_app(environ, start_response)
-            auth = environ.get("HTTP_AUTHORIZATION")
-            if _basic_auth_ok(auth):
+            cookie = environ.get("HTTP_COOKIE") or ""
+            m = re.search(rf"(?:^|;\s*){re.escape(AUTH_COOKIE)}=([^;]+)", cookie)
+            raw = m.group(1) if m else None
+            if _auth_cookie_ok(raw):
                 return self.wsgi_app(environ, start_response)
-            res = _unauthorized()
+            qs = environ.get("QUERY_STRING") or ""
+            full = path + (("?" + qs) if qs else "")
+            loc = f"/login?next={quote(full, safe='')}"
+            res = Response("", 302, {"Location": loc})
             return res(environ, start_response)
 
     # Montar ABM bajo /admin (en esta misma app/puerto)
-    application = _BasicAuthMiddleware(DispatcherMiddleware(app, {"/admin": reenvios_abm_app}))
+    application = _CookieAuthMiddleware(DispatcherMiddleware(app, {"/admin": reenvios_abm_app}))
 except Exception:
     # Si falla el import en algún entorno, dejamos la app de logs funcionando.
     application = app
