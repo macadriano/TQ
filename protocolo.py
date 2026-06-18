@@ -387,6 +387,81 @@ def sacar_checksum(xData):
     
     return format(checksum, '02X')  # Devuelve el valor en formato hexadecimal de 2 dígitos en mayúsculas
 
+
+def geo5_extract_device_id(message: str) -> str:
+    """Extrae el valor de ;ID=...; de un mensaje GEO5."""
+    if not message:
+        return ""
+    tok = ";ID="
+    t = message.find(tok)
+    if t < 0:
+        return ""
+    id_start = t + len(tok)
+    h = message.find(";#", id_start)
+    if h < 0:
+        return ""
+    return message[id_start:h].strip()
+
+
+def geo5_verify_checksum(message: str) -> bool:
+    """True si el checksum del mensaje GEO5 coincide con sacar_checksum()."""
+    if not message:
+        return False
+    star = message.rfind("*")
+    if star < 0 or not message.endswith("<") or star >= len(message) - 3:
+        return False
+    expected = sacar_checksum(message[: star + 1])
+    actual = message[star + 1 : -1].strip().upper()
+    return expected == actual
+
+
+def geo5_replace_datetime_and_recompute_checksum(message: str, ddmmyy: str, hhmmss: str) -> str:
+    """
+    Sustituye fecha (ddmmyy) y hora (hhmmss) tras >RGP y recalcula checksum.
+    Devuelve cadena vacía si el formato no es válido.
+    """
+    if not message or not message.startswith(">RGP"):
+        return ""
+    if len(ddmmyy) != 6 or len(hhmmss) != 6:
+        return ""
+    ts_end = 4 + 12  # >RGP + aaaaaa + bbbbbb
+    if len(message) < ts_end + 1:
+        return ""
+    star = message.rfind("*")
+    if star < 0 or not message.endswith("<"):
+        return ""
+    prefix_for_xor = ">RGP" + ddmmyy + hhmmss + message[ts_end : star + 1]
+    cs = sacar_checksum(prefix_for_xor)
+    return prefix_for_xor + cs + "<"
+
+
+def geo5_replace_id_and_recompute_checksum(message: str, new_id_value: str) -> str:
+    """
+    Sustituye el valor en ;ID=...;# y recalcula el checksum GEO5 (XOR hasta '*' inclusive).
+    Devuelve cadena vacía si el texto no tiene el formato esperado.
+    """
+    if not message or new_id_value is None:
+        return ""
+    tok = ";ID="
+    t = message.find(tok)
+    if t < 0:
+        return ""
+    id_start = t + len(tok)
+    h = message.find(";#", id_start)
+    if h < 0:
+        return ""
+    star = message.rfind("*", id_start)
+    if star < 0 or star <= h:
+        return ""
+    if not message.endswith("<") or star >= len(message) - 1:
+        return ""
+    head = message[:id_start]
+    mid_with_star = message[h : star + 1]
+    prefix_for_xor = head + str(new_id_value) + mid_with_star
+    cs = sacar_checksum(prefix_for_xor)
+    return prefix_for_xor + cs + "<"
+
+
 """# Ejemplo de uso sacar_checksum()
 data = "ABCDE*"
 checksum = sacar_checksum(data)

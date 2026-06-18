@@ -28,15 +28,16 @@ class ForwardingRule:
     fecha_alta: Optional[str] = None
 
 
-def _ensure_logs_dir() -> None:
-    if not os.path.exists("logs"):
-        os.makedirs("logs")
+def _ensure_logs_dir(log_dir: str = "logs") -> None:
+    d = (log_dir or "logs").strip() or "logs"
+    if not os.path.exists(d):
+        os.makedirs(d)
 
 
-def get_reenvios_log_path(for_date: datetime | None = None) -> str:
-    _ensure_logs_dir()
+def get_reenvios_log_path(for_date: datetime | None = None, log_dir: str = "logs") -> str:
+    _ensure_logs_dir(log_dir)
     dt = for_date or datetime.now()
-    return os.path.join("logs", f"Reenvios_{dt.strftime('%Y%m%d')}.log")
+    return os.path.join(log_dir, f"Reenvios_{dt.strftime('%Y%m%d')}.log")
 
 
 def append_reenvio_log(
@@ -48,9 +49,10 @@ def append_reenvio_log(
     formato: str,
     cliente: str = "",
     payload: str = "",
+    log_dir: str = "logs",
 ) -> None:
     try:
-        path = get_reenvios_log_path()
+        path = get_reenvios_log_path(log_dir=log_dir)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         dest = f"{destino_host}:{destino_port}"
         p = (payload or "").replace("\r", "\\r").replace("\n", "\\n")
