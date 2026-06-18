@@ -10,6 +10,7 @@ Proceso **separado** de `tq_server_rpg.py`. Escucha GEO5/RGP por UDP, reemplaza 
 | `REENVIOS_CONFIG_UDP.txt` | Reglas CSV (mismo formato que `REENVIOS_CONFIG.txt`) |
 | `logsUDP/` | Logs de tráfico y reenvíos |
 | `start_geo5_udp_relay.sh` / `stop_geo5_udp_relay.sh` | Arranque/parada en Linux |
+| `status_geo5_udp_relay.sh` | Estado del proceso, puerto UDP y logs |
 
 ## Logs (`logsUDP/`)
 
@@ -38,6 +39,7 @@ python3 geo5_udp_relay.py --port 6003
 # Daemon (Linux)
 ./start_geo5_udp_relay.sh
 ./stop_geo5_udp_relay.sh
+./status_geo5_udp_relay.sh
 ```
 
 Argumentos útiles:
