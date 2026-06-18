@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import protocolo
-from reenvios_config import ForwardingRule, append_reenvio_log, load_reenvios_config
+from reenvios_config import ForwardingRule, append_reenvio_log, load_reenvios_config, normalize_equipo_key
 
 LOG_DIR = "logsUDP"
 DEFAULT_LISTEN_PORT = 6003
@@ -76,21 +76,7 @@ def guardar_log_packet(
 
 
 def _equipo_5_digitos(device_id: str) -> str:
-    r = (device_id or "").strip()
-    if r.isdigit() and len(r) == 5:
-        return r
-    if r.isdigit() and len(r) >= 5:
-        return r[-5:]
-    return ""
-
-
-def _geo5_id_suffix(device_id: str, suffix_len: int) -> str:
-    orig = (device_id or "").strip()
-    if not orig or suffix_len <= 0:
-        return ""
-    if len(orig) >= suffix_len:
-        return orig[-suffix_len:]
-    return orig
+    return normalize_equipo_key(device_id) or ""
 
 
 def _utc_timestamp_geo5() -> tuple[str, str]:
@@ -241,22 +227,6 @@ class Geo5UdpRelayServer:
                 continue
 
             payload_str = message
-            if rule.formato_id is not None:
-                new_id = _geo5_id_suffix(device_id, rule.formato_id)
-                if new_id:
-                    adjusted = protocolo.geo5_replace_id_and_recompute_checksum(message, new_id)
-                    if adjusted:
-                        payload_str = adjusted
-                    else:
-                        self.logger.warning(
-                            f"Reenvíos UDP GEO5: no se pudo ajustar ID/checksum "
-                            f"(equipo {dev_log}, línea {rule.line_no})."
-                        )
-                else:
-                    self.logger.warning(
-                        f"Reenvíos UDP GEO5: FORMATO_ID sin ID de origen (equipo {dev_log}, línea {rule.line_no})."
-                    )
-
             payload_b = payload_str.encode("utf-8")
             try:
                 guardar_log_packet(

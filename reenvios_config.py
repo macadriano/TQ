@@ -94,6 +94,21 @@ def _validate_ipv4(host: str) -> bool:
         return False
 
 
+def normalize_equipo_key(equipo: str) -> Optional[str]:
+    """
+    Clave de lookup por EQUIPO: 1-5 dígitos → relleno a 5 con ceros a la izquierda.
+    Más de 5 dígitos → últimos 5 (compat. IDs largos en mensaje GEO5).
+    """
+    eq = (equipo or "").strip()
+    if not eq.isdigit():
+        return None
+    if len(eq) > 5:
+        return eq[-5:]
+    if len(eq) >= 1:
+        return eq.zfill(5)
+    return None
+
+
 def _normalize_fecha_alta(raw: str) -> str:
     s = (raw or "").strip()
     if not s:
@@ -171,10 +186,18 @@ def load_reenvios_config(path: str) -> Tuple[Dict[str, List[ForwardingRule]], Li
                     warnings.append(f"Reenvíos línea {line_no}: PROTOCOLO_GPS inválido {proto_gps!r}.")
                     continue
 
-                eq = equipo.strip()
-                if not (eq.isdigit() and len(eq) == 5):
-                    warnings.append(f"Reenvíos línea {line_no}: EQUIPO debe ser 5 dígitos, recibido {equipo!r}.")
+                eq_raw = equipo.strip()
+                eq = normalize_equipo_key(eq_raw)
+                if eq is None:
+                    warnings.append(
+                        f"Reenvíos línea {line_no}: EQUIPO debe ser numérico (1-5 dígitos), recibido {equipo!r}."
+                    )
                     continue
+                if len(eq_raw) > 5:
+                    warnings.append(
+                        f"Reenvíos línea {line_no}: EQUIPO {equipo!r} tiene más de 5 dígitos; "
+                        f"se usan los últimos 5 ({eq})."
+                    )
 
                 if not _validate_ipv4(ip_s):
                     warnings.append(f"Reenvíos línea {line_no}: IP inválida {ip_s!r}.")
