@@ -147,39 +147,90 @@ def getERRORchino(dato):
     valor = dato[28:32]
     return valor 
 
+def getCoordSignsTQ(dato):
+    """
+    Determina signos de lat/lon del paquete TQ (posiciones 50-51 = byte alto de status).
+
+    Convención GT06/Course-Status (byte alto):
+      - bit2 (0x04): 1 = Norte (+lat), 0 = Sur (-lat)
+      - bit3 (0x08): 1 = Oeste (-lon), 0 = Este (+lon)
+
+    Si el byte es 0xFF (relleno/MCC típico, status ambiguo), se usa fallback
+    por magnitud de longitud: lon>=80° → Norte/Oeste (México/US); si no → Sur/Oeste (AR).
+
+    Returns:
+        (lat_sign, lon_sign) con +1 o -1.
+    """
+    try:
+        if not dato or len(dato) < 54:
+            return -1, -1
+
+        status_hi = int(dato[50:52], 16)
+
+        # 0xFF suele ser relleno (MCC/status indefinido), no un Course-Status real.
+        if status_hi == 0xFF:
+            try:
+                lon_deg = int(dato[34:37])
+            except Exception:
+                lon_deg = 0
+            if lon_deg >= 80:
+                return 1, -1  # México / oeste de América del Norte
+            return -1, -1  # default Sur/Oeste (Argentina)
+
+        lat_sign = 1 if (status_hi & 0x04) else -1  # bit2: 1=Norte
+        lon_sign = -1 if (status_hi & 0x08) else 1  # bit3: 1=Oeste
+        return lat_sign, lon_sign
+    except Exception:
+        return -1, -1
+
+
 def getLATchino(dato):
-    # CORREGIDO: Extraer latitud según protocolo TQ (posiciones 24-33)
+    # Extraer latitud según protocolo TQ (posiciones 24-33)
     # Formato: GGMM.MMMMMM (grados, minutos, decimales de minutos)
     try:
         valor = dato[24:34]  # Posiciones 24-33 (10 dígitos)
-        # Convertir formato GGMM.MMMMMM a grados decimales
-        grados = int(valor[0:2])  # Primeros 2 dígitos = grados
-        minutos_enteros = int(valor[2:4])  # Siguientes 2 dígitos = minutos enteros
-        decimales_minutos = int(valor[4:10]) / 1000000.0  # Resto = decimales de minutos (6 dígitos)
-        
-        # Convertir a grados decimales
+        grados = int(valor[0:2])
+        minutos_enteros = int(valor[2:4])
+        decimales_minutos = int(valor[4:10]) / 1000000.0
         minutos_completos = minutos_enteros + decimales_minutos
         latitud = grados + (minutos_completos / 60.0)
-        return round(-latitud, 7)  # Signo negativo para hemisferio sur
-    except:
+        lat_sign, _ = getCoordSignsTQ(dato)
+        return round(lat_sign * latitud, 7)
+    except Exception:
         return 0.0
 
 def getLONchino(dato):
-    # CORREGIDO: Extraer longitud según protocolo TQ (posiciones 34-43)
+    # Extraer longitud según protocolo TQ (posiciones 34-43)
     # Formato: GGGMM.MMMMMM (grados, minutos, decimales de minutos)
     try:
         valor = dato[34:44]  # Posiciones 34-43 (10 dígitos)
-        # Convertir formato GGGMM.MMMMMM a grados decimales
-        grados = int(valor[0:3])  # Primeros 3 dígitos = grados
-        minutos_enteros = int(valor[3:5])  # Siguientes 2 dígitos = minutos enteros
-        decimales_minutos = int(valor[5:10]) / 100000.0  # Resto = decimales de minutos (5 dígitos)
-        
-        # Convertir a grados decimales
+        grados = int(valor[0:3])
+        minutos_enteros = int(valor[3:5])
+        decimales_minutos = int(valor[5:10]) / 100000.0
         minutos_completos = minutos_enteros + decimales_minutos
         longitud = grados + (minutos_completos / 60.0)
-        return round(-longitud, 7)  # Signo negativo para hemisferio oeste
-    except:
+        _, lon_sign = getCoordSignsTQ(dato)
+        return round(lon_sign * longitud, 7)
+    except Exception:
         return 0.0
+
+
+def _geo5_fmt_lat_lon(xlat: float, xlon: float) -> tuple:
+    """
+    Formatea lat/lon decimales a GEO5 (GGMM.MMMM / GGGMM.MMMM) con signo correcto.
+    Norte/Este: sin prefijo '-'; Sur/Oeste: prefijo '-'.
+    """
+    lat_abs = abs(float(xlat))
+    lon_abs = abs(float(xlon))
+    lat_deg = int(lat_abs)
+    lon_deg = int(lon_abs)
+    lat_min = (lat_abs - lat_deg) * 60.0
+    lon_min = (lon_abs - lon_deg) * 60.0
+    lat_body = f"{lat_deg:02d}{lat_min:07.4f}"
+    lon_body = f"{lon_deg:03d}{lon_min:07.4f}"
+    lat_s = ("-" + lat_body) if xlat < 0 else lat_body
+    lon_s = ("-" + lon_body) if xlon < 0 else lon_body
+    return lat_s, lon_s
 
 def getVELchino(dato):
     """Extraer velocidad del protocolo TQ (en nudos/knots)"""
@@ -494,18 +545,14 @@ def RGPdesdeCHINO(dato, TerminalID):
 	# >RGPaaaaaabbbbbbcddddddddefffffffffggghhhijjjjkkll<
 	# I => 12/11/2016 09:55:38 : >RGP121116125537-3456.0510-05759.56090000283000001;&08;ID=0107;#0090*57<
 	fecha = getFECHAchino(dato)
-	xlat = getLATchino(dato) # viene en formato decimal de grados numerico y signo (ej: -34.594233)
-	xlon = getLONchino(dato)
+	xlat = getLATchino(dato)  # decimal con signo (Norte +, Sur -)
+	xlon = getLONchino(dato)  # decimal con signo (Este +, Oeste -)
 	
 	# VALIDACIÓN: No generar mensaje RPG si las coordenadas son 0 (sin señal GPS)
 	if abs(xlat) < 0.000001 and abs(xlon) < 0.000001:
 		return ""  # Retornar string vacío para indicar que no se debe enviar
 	
-	# grados + minutos + decimal de minutos y sin signo (ej: 3441.5918)
-	# lat = str(xlat)[1:3] + str((int(xlat)-xlat)*60)[0:2] + str((int(xlat)-xlat)*60)[2:7]
-	lat = str(xlat)[1:3] + str((xlat-int(xlat))*60)[1:3] + str((xlat-int(xlat))*60)[3:8]
-	#lon = "0" + str(xlon)[1:3] + str((int(xlon)-xlon)*60)[0:2] + str((int(xlon)-xlon)*60)[2:7]
-	lon = "0" + str(xlon)[1:3] + str((xlon-int(xlon))*60)[1:3] + str((xlon-int(xlon))*60)[3:8]
+	lat, lon = _geo5_fmt_lat_lon(xlat, xlon)
 	vel = funciones.completaCero3(getVELchino(dato))
 	# CORREGIDO: Usar el rumbo real extraído del mensaje en lugar de "000"
 	dir = funciones.completaCero3(getRUMBOchino(dato))
@@ -529,11 +576,11 @@ def RGPdesdeCHINO(dato, TerminalID):
 	ID = TerminalID
 	nroMje = "0001"
 	
-	valor = ">RGP" + fecha + "-" + lat + "-" + lon + vel + dir + estado + edad + calidad + ";&" + evento + ";ID=" + ID + ";#" + nroMje + "*"
+	valor = ">RGP" + fecha + lat + lon + vel + dir + estado + edad + calidad + ";&" + evento + ";ID=" + ID + ";#" + nroMje + "*"
 	checksum = sacar_checksum(valor)
 	valor = valor + checksum + "<"
 	# >RGP230622213474-3435.6154-05833.01920000003000001;&01;ID=1146;#0001*5F<
-	# >RGP230622213474-3435.6154-05833.01920000003000001;&08;ID=1146;#0001*5F<  (con ignición encendida)
+	# México (lat +): >RGP...1925.1234-09912.3456...
 	return valor
 
 
