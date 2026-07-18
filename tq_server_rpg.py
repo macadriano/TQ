@@ -1661,22 +1661,16 @@ class TQServerRPG:
             # Formato RPG correcto según el manual: >RGP[timestamp][lat][lon][heading][speed][status]&[seq];ID=[id];#[seq]*[checksum]<
             # Ejemplo: >RGP210825145011-3416.9932-05855.05980000003000001;&01;ID=38312;#0001*62<
             
-            # Convertir coordenadas al formato RPG (GGMM.MMMM sin signo, dirección implícita)
-            # Latitud: convertir de decimal a GGMM.MMMM
+            # Convertir coordenadas al formato RPG/GEO5 (signo explícito c/e: + Norte/Este, - Sur/Oeste)
             lat_abs = abs(latitude)
             lat_deg = int(lat_abs)
             lat_min = (lat_abs - lat_deg) * 60.0
-            lat_str = f"{lat_deg:02d}{lat_min:07.4f}"
-            if latitude < 0:  # Sur
-                lat_str = "-" + lat_str
-            
-            # Longitud: convertir de decimal a GGGMM.MMMM sin signo, dirección implícita
+            lat_str = ("-" if latitude < 0 else "+") + f"{lat_deg:02d}{lat_min:07.4f}"
+
             lon_abs = abs(longitude)
             lon_deg = int(lon_abs)
             lon_min = (lon_abs - lon_deg) * 60.0
-            lon_str = f"{lon_deg:03d}{lon_min:07.4f}"
-            if longitude < 0:  # Oeste
-                lon_str = "-" + lon_str
+            lon_str = ("-" if longitude < 0 else "+") + f"{lon_deg:03d}{lon_min:07.4f}"
             
             # CORREGIDO: Formatear rumbo (3 dígitos) y velocidad (3 dígitos)
             # Usar los valores extraídos directamente sin conversiones adicionales

@@ -217,8 +217,8 @@ def getLONchino(dato):
 
 def _geo5_fmt_lat_lon(xlat: float, xlon: float) -> tuple:
     """
-    Formatea lat/lon decimales a GEO5 (GGMM.MMMM / GGGMM.MMMM) con signo correcto.
-    Norte/Este: sin prefijo '-'; Sur/Oeste: prefijo '-'.
+    Formatea lat/lon decimales a GEO5 (GGMM.MMMM / GGGMM.MMMM) con signo explícito.
+    Campo c/e del protocolo: '+' Norte/Este, '-' Sur/Oeste.
     """
     lat_abs = abs(float(xlat))
     lon_abs = abs(float(xlon))
@@ -228,8 +228,8 @@ def _geo5_fmt_lat_lon(xlat: float, xlon: float) -> tuple:
     lon_min = (lon_abs - lon_deg) * 60.0
     lat_body = f"{lat_deg:02d}{lat_min:07.4f}"
     lon_body = f"{lon_deg:03d}{lon_min:07.4f}"
-    lat_s = ("-" + lat_body) if xlat < 0 else lat_body
-    lon_s = ("-" + lon_body) if xlon < 0 else lon_body
+    lat_s = ("-" if xlat < 0 else "+") + lat_body
+    lon_s = ("-" if xlon < 0 else "+") + lon_body
     return lat_s, lon_s
 
 def getVELchino(dato):
