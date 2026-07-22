@@ -40,9 +40,7 @@ class TQServerRPG:
                  reenvios_reload_interval_seconds: int = 60,
                  reenvios_config_path: Optional[str] = None,
                  tq_tcp_general_host: str = '34.95.160.245',
-                 tq_tcp_general_port: int = 5032,
-                 geo5_udp_clone_host: str = '34.95.160.245',
-                 geo5_udp_clone_port: int = 5004):
+                 tq_tcp_general_port: int = 5032):
         self.host = host
         self.port = port
         self.udp_host = udp_host
@@ -51,9 +49,6 @@ class TQServerRPG:
         # Destino general adicional: TQ posición crudo por TCP
         self.tq_tcp_general_host = tq_tcp_general_host
         self.tq_tcp_general_port = int(tq_tcp_general_port)
-        # Destino general adicional GEO5 UDP (misma regla SERVICIO que udp_host:udp_port)
-        self.geo5_udp_clone_host = geo5_udp_clone_host
-        self.geo5_udp_clone_port = int(geo5_udp_clone_port)
         
         # Configuración de heartbeat UDP
         self.heartbeat_enabled = heartbeat_enabled
@@ -426,10 +421,6 @@ class TQServerRPG:
 
             if rpg_message and not has_servicio:
                 destinations.append(("UDP", self.udp_host, self.udp_port, rpg_message))
-                if self.geo5_udp_clone_host and self.geo5_udp_clone_port:
-                    destinations.append(
-                        ("UDP", self.geo5_udp_clone_host, self.geo5_udp_clone_port, rpg_message)
-                    )
             for rule in rules:
                 if rule.protocolo_gps != "GEO5" or not rpg_message:
                     continue
@@ -658,11 +649,8 @@ class TQServerRPG:
 
     def send_geo5_rpg_udp(self, rpg_message: str, rpg_device_id: str, full_device_id: str = "") -> None:
         """
-        Destinos UDP generales GEO5:
-          - 179.43.115.190:7007 (udp_host/udp_port)
-          - 34.95.160.245:5004 (geo5_udp_clone_*)
-        Ambos se omiten si existe regla SERVICIO para el equipo.
-        Luego aplica todas las filas CSV para ese EQUIPO (GEO5 por UDP o TCP).
+        Destino UDP general GEO5 (179.43.115.190:7007) salvo que exista regla SERVICIO para el equipo;
+        luego aplica todas las filas CSV para ese EQUIPO (GEO5 por UDP o TCP).
         """
         if not rpg_message:
             return
@@ -672,27 +660,25 @@ class TQServerRPG:
         has_servicio = any(r.tipo == "SERVICIO" for r in rules)
 
         if not has_servicio:
-            generales = [(self.udp_host, self.udp_port)]
-            if self.geo5_udp_clone_host and self.geo5_udp_clone_port:
-                generales.append((self.geo5_udp_clone_host, self.geo5_udp_clone_port))
-            for g_host, g_port in generales:
-                try:
-                    funciones.guardarLogPacket(
-                        "->", "UDP", g_host, g_port, rpg_message, dev_log
-                    )
-                    funciones.enviar_mensaje_udp(g_host, g_port, rpg_message)
-                    append_reenvio_log(
-                        dev_log,
-                        "GENERAL",
-                        g_host,
-                        g_port,
-                        "UDP",
-                        "GEO5",
-                        "GENERAL",
-                        rpg_message,
-                    )
-                except Exception as e:
-                    self.logger.error(f"Error enviando GEO5 UDP general a {g_host}:{g_port}: {e}")
+            try:
+                funciones.guardarLogPacket(
+                    "->", "UDP", self.udp_host, self.udp_port, rpg_message, dev_log
+                )
+                funciones.enviar_mensaje_udp(self.udp_host, self.udp_port, rpg_message)
+                append_reenvio_log(
+                    dev_log,
+                    "GENERAL",
+                    self.udp_host,
+                    self.udp_port,
+                    "UDP",
+                    "GEO5",
+                    "GENERAL",
+                    rpg_message,
+                )
+            except Exception as e:
+                self.logger.error(
+                    f"Error enviando GEO5 UDP general a {self.udp_host}:{self.udp_port}: {e}"
+                )
 
         for rule in rules:
             if rule.protocolo_gps != "GEO5":
@@ -1463,11 +1449,6 @@ class TQServerRPG:
             self.logger.info(f"Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"🚀 Servidor TQ+RPG iniciado en {self.host}:{self.port}")
             print(f"📡 UDP primario (GEO5) a {self.udp_host}:{self.udp_port}")
-            if self.geo5_udp_clone_host and self.geo5_udp_clone_port:
-                print(
-                    f"📡 UDP clon GEO5 a {self.geo5_udp_clone_host}:{self.geo5_udp_clone_port} "
-                    f"(misma regla SERVICIO)"
-                )
             if self.tq_tcp_general_host and self.tq_tcp_general_port:
                 print(
                     f"📡 TCP general TQ posición a {self.tq_tcp_general_host}:{self.tq_tcp_general_port}"

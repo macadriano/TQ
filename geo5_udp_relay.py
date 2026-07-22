@@ -24,9 +24,11 @@ from reenvios_config import ForwardingRule, append_reenvio_log, load_reenvios_co
 LOG_DIR = "logsUDP"
 DEFAULT_LISTEN_PORT = 6003
 DEFAULT_CONFIG_NAME = "REENVIOS_CONFIG_UDP.txt"
-# Destino general GEO5 (misma regla SERVICIO que el CSV del relay)
-DEFAULT_GENERAL_HOST = "34.95.160.245"
-DEFAULT_GENERAL_PORT = 5004
+# Destinos generales GEO5 (omitidos si hay SERVICIO en el CSV del relay)
+DEFAULT_GENERAL_DESTINATIONS = (
+    ("179.43.115.190", 7007),
+    ("34.95.160.245", 5004),
+)
 
 
 def _ensure_log_dir(log_dir: str = LOG_DIR) -> None:
@@ -104,14 +106,19 @@ class Geo5UdpRelayServer:
         config_path: Optional[str] = None,
         reload_interval_seconds: int = 60,
         log_dir: str = LOG_DIR,
-        general_host: str = DEFAULT_GENERAL_HOST,
-        general_port: int = DEFAULT_GENERAL_PORT,
+        general_destinations: Optional[List[tuple]] = None,
     ):
         self.host = host
         self.port = int(port)
         self.log_dir = log_dir
-        self.general_host = (general_host or "").strip()
-        self.general_port = int(general_port) if general_port else 0
+        if general_destinations is None:
+            self.general_destinations = list(DEFAULT_GENERAL_DESTINATIONS)
+        else:
+            self.general_destinations = [
+                (str(h).strip(), int(p))
+                for h, p in general_destinations
+                if str(h).strip() and int(p)
+            ]
         self.reload_interval_seconds = int(reload_interval_seconds)
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.config_path = (
@@ -248,7 +255,7 @@ class Geo5UdpRelayServer:
     def _forward_geo5(self, message: str, device_id: str) -> int:
         """
         Reenvía el GEO5 ajustado:
-          - destino general 34.95.160.245:5004 si no hay regla SERVICIO
+          - destinos generales 179.43.115.190:7007 y 34.95.160.245:5004 si no hay SERVICIO
           - más todas las filas CSV UDP/GEO5 del equipo
         """
         dev5 = _equipo_5_digitos(device_id)
@@ -257,16 +264,12 @@ class Geo5UdpRelayServer:
         has_servicio = any(r.tipo == "SERVICIO" for r in rules)
 
         sent = 0
-        if not has_servicio and self.general_host and self.general_port:
-            if self._send_one_udp(
-                message,
-                self.general_host,
-                self.general_port,
-                "GENERAL",
-                "GENERAL",
-                dev_log,
-            ):
-                sent += 1
+        if not has_servicio:
+            for g_host, g_port in self.general_destinations:
+                if self._send_one_udp(
+                    message, g_host, g_port, "GENERAL", "GENERAL", dev_log
+                ):
+                    sent += 1
 
         for rule in rules:
             if rule.protocolo_gps != "GEO5":
@@ -325,10 +328,9 @@ class Geo5UdpRelayServer:
         n_rules = sum(len(v) for v in self._rules_by_device.values())
         self.logger.info(f"Relay GEO5 UDP escuchando en {self.host}:{self.port}")
         self.logger.info(f"Config: {self.config_path} ({n_rules} reglas)")
-        if self.general_host and self.general_port:
+        for g_host, g_port in self.general_destinations:
             self.logger.info(
-                f"UDP general GEO5 a {self.general_host}:{self.general_port} "
-                f"(omitido si SERVICIO)"
+                f"UDP general GEO5 a {g_host}:{g_port} (omitido si SERVICIO)"
             )
         self.logger.info(f"Logs: {self.log_dir}/")
         print(f"Relay GEO5 UDP en {self.host}:{self.port} (logs en {self.log_dir}/)")
@@ -373,22 +375,11 @@ def main() -> None:
         help="Segundos entre recargas del CSV (0 = desactivar)",
     )
     parser.add_argument("--log-dir", default=LOG_DIR, help=f"Carpeta de logs (default {LOG_DIR})")
-    parser.add_argument(
-        "--general-host",
-        default=DEFAULT_GENERAL_HOST,
-        help=f"Destino general GEO5 (default {DEFAULT_GENERAL_HOST})",
-    )
-    parser.add_argument(
-        "--general-port",
-        type=int,
-        default=DEFAULT_GENERAL_PORT,
-        help=f"Puerto general GEO5 (default {DEFAULT_GENERAL_PORT})",
-    )
     parser.add_argument("--daemon", action="store_true", help="Modo daemon (sin prompts)")
     args = parser.parse_args()
 
     print("=" * 60)
-    print("Relay UDP GEO5/RGP (fecha/hora UTC + reenvío CSV + general)")
+    print("Relay UDP GEO5/RGP (fecha/hora UTC + reenvío CSV + generales)")
     print("=" * 60)
 
     relay = Geo5UdpRelayServer(
@@ -397,8 +388,6 @@ def main() -> None:
         config_path=args.config,
         reload_interval_seconds=args.reload_interval,
         log_dir=args.log_dir,
-        general_host=args.general_host,
-        general_port=args.general_port,
     )
 
     try:
