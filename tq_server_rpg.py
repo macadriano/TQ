@@ -40,7 +40,7 @@ class TQServerRPG:
                  reenvios_reload_interval_seconds: int = 60,
                  reenvios_config_path: Optional[str] = None,
                  tq_tcp_general_host: str = '34.95.160.245',
-                 tq_tcp_general_port: int = 5032):
+                 tq_tcp_general_port: int = 5004):
         self.host = host
         self.port = port
         self.udp_host = udp_host
@@ -571,8 +571,8 @@ class TQServerRPG:
         self, data: bytes, rpg_device_id: str, full_device_id: str = ""
     ) -> None:
         """
-        Reenvía mensajes de posición TQ (payload crudo) por TCP al destino general
-        34.95.160.245:5032. No depende del CSV.
+        Reenvía solo mensajes de posición TQ (payload crudo) por TCP a
+        34.95.160.245:5004. No NMEA, login ni otros. No depende del CSV.
         """
         if not data or not self.tq_tcp_general_host or not self.tq_tcp_general_port:
             return
@@ -612,7 +612,7 @@ class TQServerRPG:
             )
 
     def apply_reenvios_tq_csv(self, data: bytes, rpg_device_id: str, full_device_id: str = "") -> None:
-        """Reglas CSV con PROTOCOLO_GPS=TQ (UDP o TCP), mismo payload crudo que llegó por TCP."""
+        """Reglas CSV PROTOCOLO_GPS=TQ. Solo invocar con paquetes de posición TQ (no NMEA/login)."""
         dev5 = self._equipo_5_digitos(rpg_device_id, full_device_id)
         if not dev5:
             return
@@ -753,7 +753,6 @@ class TQServerRPG:
         except Exception:
             ip_in, port_in = client_id, ""
         funciones.guardarLogPacket("<-", "TCP", ip_in, port_in, hex_data, rpg_id or full_id)
-        self.apply_reenvios_tq_csv(data, rpg_id, full_id)
         
         try:
             # ===================== F I L T R O   N M E A 0 1 8 3 ======================
@@ -774,7 +773,7 @@ class TQServerRPG:
                 
                 # No loggear verbose - ya se guardó con guardarLogNMEA
                 print(f"⛔ NMEA0183 filtrado: {text_data}")
-                # NMEA ignorado - ya se guardó con guardarLogNMEA
+                # NMEA: no reenviar por TCP general ni CSV TQ
                 pass
                 return
             # ==========================================================================
@@ -795,10 +794,11 @@ class TQServerRPG:
                     # No loggear verbose - solo print para consola
                     print(f"🆔 TerminalID actualizado: {position_id}")
 
-                # Reenvío TCP general de posición TQ (crudo)
-                self.forward_tq_position_tcp_general(
-                    data, position_id or rpg_id, full_id or (hex_data[2:12] if len(hex_data) >= 12 else "")
-                )
+                # Reenvío TQ posición (crudo): general TCP + reglas CSV TQ
+                pid = position_id or rpg_id
+                fid = full_id or (hex_data[2:12] if len(hex_data) >= 12 else "")
+                self.apply_reenvios_tq_csv(data, pid, fid)
+                self.forward_tq_position_tcp_general(data, pid, fid)
             
                 if len(self.terminal_id) > 0:
                     # Convertir a RPG usando la función existente
@@ -848,9 +848,10 @@ class TQServerRPG:
                             # No loggear verbose - solo print
                             print(f"🆔 TerminalID actualizado: {position_id}")
 
-                    # Reenvío TCP general de posición TQ (crudo) — formato $24 / otros
+                    # Reenvío TQ posición (crudo): general TCP + reglas CSV TQ — formato $24 / otros
                     rid = str(position_data.get("device_id", "") or rpg_id)
                     fid = str(position_data.get("device_id_completo", "") or full_id)
+                    self.apply_reenvios_tq_csv(data, rid, fid)
                     self.forward_tq_position_tcp_general(data, rid, fid)
                     
                     # Guardar posición en archivo CSV (si existe la función, sino ignorar)

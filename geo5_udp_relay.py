@@ -27,7 +27,7 @@ DEFAULT_CONFIG_NAME = "REENVIOS_CONFIG_UDP.txt"
 # Destinos generales GEO5 (omitidos si hay SERVICIO en el CSV del relay)
 DEFAULT_GENERAL_DESTINATIONS = (
     ("179.43.115.190", 7007),
-    ("34.95.160.245", 5004),
+    ("34.95.160.245", 5032),
 )
 
 
@@ -255,7 +255,7 @@ class Geo5UdpRelayServer:
     def _forward_geo5(self, message: str, device_id: str) -> int:
         """
         Reenvía el GEO5 ajustado:
-          - destinos generales 179.43.115.190:7007 y 34.95.160.245:5004 si no hay SERVICIO
+          - destinos generales 179.43.115.190:7007 y 34.95.160.245:5032 si no hay SERVICIO
           - más todas las filas CSV UDP/GEO5 del equipo
         """
         dev5 = _equipo_5_digitos(device_id)
